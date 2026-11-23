@@ -46,8 +46,9 @@ class InstallGuide(W.QWidget):
         self.firmware_pane=self.pane()
         self.build_status=self.note(self.firmware_pane,'');self.build_status.hide()
         p=self.pane('首次授信','第一次安装时，通过 USB 安装机身公钥；已有授信可直接下一步。软件会自动保留原始备份。')
-        self.trust_status=self.note(p,'首次授信只需执行一次。')
+        self.trust_status=self.note(p,'已授信可跳过；需要时可再次安装公钥。')
         self.trust_button=self.button(p,'通过 USB 安装机身公钥',lambda:self.run('firmware_trust_install',dict(workspace=window.work('trust-install'))),True)
+        self.trust_restore_button=self.button(p,'恢复授信（恢复原厂公钥）',window.restore_trust)
         p=self.pane('写入配置，然后手动卡刷','确认 SD 卡已装入相机，卡根目录已有本次生成的 BODYDATA.DAT。')
         self.config_summary=self.note(p,'')
         self.config_button=self.button(p,'通过 USB 写入本次功能配置',lambda:self.run('firmware_settings_install',window.feature_settings_args()),True)
@@ -161,6 +162,7 @@ class InstallGuide(W.QWidget):
         # Preview navigation has no completion or device prerequisites.
         self.back.setEnabled(True);self.next.setEnabled(True)
         self.trust_button.setEnabled(idle and v.trust_install_button.isEnabled())
+        self.trust_restore_button.setEnabled(idle)
         self.config_button.setEnabled(idle)
         self.config_summary.setText('本次配置：'+('FL2／FL3、'if v.config_fl23.isChecked()else'')+('竖屏显示、'if v.config_vertical.isChecked()else'')+'关闭语音指南。')
 

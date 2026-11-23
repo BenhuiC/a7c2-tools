@@ -1,5 +1,17 @@
 # Development guide
 
+## Repeatable trust installation (2026-11-23)
+
+First Trust, the installation guide and Advanced Settings expose Restore Trust
+(restore the factory public key), using the existing same-body backup flow.
+Completed public-key installs may be repeated; an unknown attempted write still
+stops. The updater editor accepts its own installed instruction sequence, so a
+repeated install of the same key produces no changed sectors. Keep the first
+same-body original backup rather than replacing its reference with the repeated
+installation. Card-recovery completion explicitly directs manual 2.01 flashing
+after version preparation to 2.00. These follow-up checks use saved images and
+packaged UI only; they do not qualify physical flashing or a cold boot.
+
 ## macOS 3.10 packaging (2026-11-16)
 
 The Apple Silicon app uses a three-step guide: generate firmware, install the

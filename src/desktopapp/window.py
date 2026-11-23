@@ -450,8 +450,9 @@ class Window(W.QMainWindow):
         self.recovery_usb_panel.setVisible(usb);self.recovery_ssh_panel.setVisible(not usb)
 
     def advanced_settings_page(self):
-        layout=self.page('高级设置','连接设置与 USB 版本修改。日常安装请使用“安装向导”。')
+        layout=self.page('高级设置','连接设置、USB 版本修改与恢复授信。日常安装请使用“安装向导”。')
         self.connection_settings_controls(layout)
+        self.advanced_trust_restore_button=self.trust_restore_control(layout)
         form=self.box(layout,'通过 USB 修改版本号')
         self.field(form,'usb_version_target','目标版本',value='2.00')
         self.button(layout,'通过 USB 修改版本号','usb_set_version',
@@ -652,6 +653,7 @@ class Window(W.QMainWindow):
         note.setWordWrap(True);layout.addWidget(note)
         self.trust_install_button=self.button(layout,'通过 USB 安装机身公钥','firmware_trust_install',
             lambda:dict(workspace=self.work('trust-install')),primary=True)
+        self.trust_restore_button=self.trust_restore_control(layout)
         self.config_group=W.QGroupBox('刷前写入配置');config=W.QVBoxLayout(self.config_group)
         self.config_fl23=W.QCheckBox('启用 FL2／FL3')
         self.config_vertical=W.QCheckBox('启用竖屏显示（不增加机内开关菜单）')
@@ -675,6 +677,32 @@ class Window(W.QMainWindow):
     def trust_verify_source(self):
         return self.settings.get('trust_latest_work')or self.settings.get('trust_install_work','')
 
+    def trust_restore_control(self,layout):
+        button=W.QPushButton('恢复授信（恢复原厂公钥）')
+        button.clicked.connect(self.restore_trust)
+        layout.addWidget(button);self.buttons.append(button)
+        return button
+
+    def restore_trust(self):
+        if self.process is not None:return
+        from .trustinstall import STATE
+        source=self.settings.get('trust_install_work','')
+        if not source or not (Path(source)/STATE).is_file():
+            path,_=W.QFileDialog.getOpenFileName(self,'选择首次授信记录',source,
+                '首次授信记录 ('+STATE+')')
+            if not path:return
+            source=str(Path(path).parent)
+        self.launch('firmware_trust_restore',dict(workspace=self.work('trust-restore'),source_workspace=source))
+
+    def remember_trust_install(self,result):
+        from .trustinstall import STATE
+        previous=self.settings.get('trust_install_work','')
+        try:
+            state=json.loads((Path(previous)/STATE).read_text(encoding='utf-8')) if previous else {}
+        except (OSError,ValueError):state={}
+        if not state.get('backup_verified') or state.get('identity')!=result.get('identity'):
+            self.settings['trust_install_work']=result['workspace']
+
     def feature_settings_args(self):
         return dict(workspace=self.work('preflash-settings'),fl23=self.config_fl23.isChecked(),
             vertical=self.config_vertical.isChecked(),voice_cleanup=self.config_voice.isChecked())
@@ -690,12 +718,15 @@ class Window(W.QMainWindow):
         idle=self.process is None
         self.config_install_button.setEnabled(idle and any(widget.isChecked() for widget in
             (self.config_fl23,self.config_vertical,self.config_voice)))
-        restored=latest.get('mode')=='trust_restore' and latest.get('phase')=='LOADED'
-        self.trust_install_button.setEnabled(idle and not (restorable and state.get('write_attempted') and not restored))
+        restored=latest.get('mode')=='trust_restore' and latest.get('phase')in ('AWAITING_RELOAD','LOADED')
         phase=latest.get('phase',state.get('phase'))
-        self.trust_state.setText('上次授信尚未确认完成，请查看日志，不要重复安装。' if phase=='NEEDS_REVIEW' else
+        unknown=latest.get('write_attempted',state.get('write_attempted',False)) and phase not in ('AWAITING_RELOAD','LOADED')
+        self.trust_install_button.setEnabled(idle and not unknown)
+        self.trust_restore_button.setEnabled(idle)
+        if hasattr(self,'advanced_trust_restore_button'):self.advanced_trust_restore_button.setEnabled(idle)
+        self.trust_state.setText('上次授信尚未确认完成，请查看日志，不要重复安装。' if unknown else
             '上次操作是恢复原厂授信，安装本工具生成的固件前需要重新授信。' if restored else
-            '已保留授信记录；已授信的相机无需重复安装公钥。' if restorable else '')
+            '已保留授信记录；需要时可再次安装公钥。恢复授信会恢复原厂公钥。' if restorable else '')
         if hasattr(self,'install_guide'):self.install_guide.refresh()
 
 
@@ -1133,6 +1164,7 @@ class Window(W.QMainWindow):
                 target='；'.join('自订 %s → %s'%(r['slot'],'恢复 ST 默认'if r['action']=='restore'else'写入 '+r['name'])for r in arguments.get('operations',[]))
             scope=('仅写入并保存所选刷前配置；之后保持开机，直接手动卡刷。\n'if action=='firmware_settings_install'else
                    '保存机身原始备份并安装公钥。\n'if action=='firmware_trust_install'else
+                   '从本机首次授信备份恢复原厂公钥，撤销本工具授信。\n'if action=='firmware_trust_restore'else
                    '仅将更新器版本设为 2.00，随后手动卡刷恢复包。\n'if action in ('usb_restore_version','ssh_restore_version')else
                    '只修改版本资料。\n'if action=='usb_set_version'else
                    '按所选范围保存外观或快门声音，完成后按提示重开。\n')
@@ -1158,7 +1190,7 @@ class Window(W.QMainWindow):
         if action=='ssh_restore_version':self.settings['factory_version_work']=arguments['workspace']
         if action=='usb_restore_version':self.settings['factory_usb_version_work']=arguments['workspace']
         if action=='firmware_trust_install':
-            self.settings['trust_install_work']=arguments['workspace']
+            if not self.settings.get('trust_install_work'):self.settings['trust_install_work']=arguments['workspace']
         if action in ('firmware_trust_install','firmware_trust_restore'):
             self.settings['trust_latest_work']=arguments['workspace']
         if action in ('sound_import','sound_generate','sound_volume'):self.stop_sound_preview()
@@ -1236,6 +1268,7 @@ class Window(W.QMainWindow):
         action=status.get('action');result=status.get('result',{})
         if success and action in ('usb_prepare','connect'):self.settings['connection_verified']=True
         if success and action=='firmware_trust_verify':self.settings['trust_latest_work']=result['workspace']
+        if success and action=='firmware_trust_install':self.remember_trust_install(result)
         if success and action in ('direct_looks_import','direct_verify')and result.get('mode')in ('install_all','look_import','slot_default'):
             self.settings['look_direct_work']=result['workspace'];self.settings.pop('look_resume_source',None)
         if success and result.get('next_baseline'):

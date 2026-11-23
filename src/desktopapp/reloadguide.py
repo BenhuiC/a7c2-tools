@@ -56,6 +56,10 @@ def sound_notice(action,result):
 
 
 def text(*,mode=None):
+    if mode=='card_recovery':
+        return ('版本资料已设为 2.00，USB 读写已结束。\n\n'
+                '接下来使用 2.01 原厂内容恢复包 BODYDATA.DAT：'
+                '文件放在 SD 卡根目录，断开 USB 后，在相机菜单手动卡刷 2.01。')
     if mode=='factory_version':
         return ('版本资料已设为 2.00，USB 读写已结束。\n\n'+STEPS+
                 '\n\n随后将 BODYDATA.DAT 放入 SD 卡根目录，手动卡刷 2.01 原厂内容恢复包。')

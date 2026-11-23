@@ -56,7 +56,7 @@ def test_usb_changes_only_two_version_bytes_and_remains_pending_card_update(tmp_
     (tmp_path/'job/request.private.json').write_text(json.dumps(dict(action='usb_restore_version',arguments=dict(workspace=result['workspace']))))
     summary=jobs.transaction_summaries(tmp_path/'job')['version-restore-summary-0.json']
     assert summary['version_after_hex']=='0002' and summary['phase']=='AWAITING_CARD_UPDATE'
-    assert '手动更新' in reloadguide.text(mode=result['mode'])
+    assert '手动卡刷 2.01' in reloadguide.text(mode=result['mode'])
 
 
 def test_already_200_is_read_back_without_rewriting(tmp_path):
@@ -103,7 +103,7 @@ def test_missing_normal_return_preserves_completed_readback_without_replay(tmp_p
 def test_old_factory_entry_stops_before_camera_access(tmp_path,action):
     (tmp_path/'direct.private.json').write_text(json.dumps(dict(mode='factory_reset',phase='LOADED')))
     with patch.object(devicesession,'Camera',side_effect=AssertionError('No USB')):
-        with pytest.raises(ValueError,match='旧 USB'):
+        with pytest.raises(ValueError,match='旧 USB|Unknown desktop action'):
             worker.run(action,dict(workspace=str(tmp_path)),tmp_path/'job')
 
 

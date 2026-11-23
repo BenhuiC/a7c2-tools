@@ -51,19 +51,35 @@ def pin_library(raw: bytes, public: bytes):
     calls = [(i, targets.get(int(ins.op_str[1:], 16))) for i, ins in enumerate(instructions)
              if ins.mnemonic == 'bl' and ins.op_str.startswith('#0x')]
     sha_index = next(i for i, name in calls if name == 'SHA1_Final')
-    compare_index = next(i for i, name in calls if name == 'strncmp')
     # These registers and the existing error/success continuations are verified
     # from actual instructions instead of assuming R5 offsets or a fixed C2 VA.
     if [(i.mnemonic, i.op_str) for i in instructions[sha_index-2:sha_index]] != [
             ('mov', 'x1, x19'), ('mov', 'x0, x23')]:
         raise ValueError('Unrecognized C2 key digest register contract')
-    branch = instructions[compare_index+1]
-    if branch.mnemonic != 'cbz' or not branch.op_str.startswith('w0, #0x'):
-        raise ValueError('Unrecognized C2 key comparison continuation')
-    entry = instructions[sha_index+1].address
-    reject = instructions[compare_index+2].address
-    success = int(branch.op_str.split('#')[1], 16)
-    if not any(name == 'munmap' and instructions[i].address >= success for i, name in calls):
+    entry = instructions[sha_index].address + 4
+    at = offset(entry)
+    pinned = raw[at:at+4] == struct.pack('<I', 0xf94002e0)
+    if pinned:
+        # Our literal pin can contain undecodable instructions. Decode the two
+        # fixed continuations directly, then check the entire instruction body.
+        reject_word, success_word = struct.unpack_from('<II', raw, at+44)
+        if reject_word & 0xff00001f != 0xb5000000 or success_word & 0xfc000000 != 0x14000000:
+            raise ValueError('Unrecognized installed C2 key continuations')
+        signed = lambda value, bits: value - (1 << bits) if value & (1 << (bits-1)) else value
+        reject = entry + 44 + 4 * signed((reject_word >> 5) & 0x7ffff, 19)
+        success = entry + 48 + 4 * signed(success_word & 0x3ffffff, 26)
+        if not entry+76 <= reject < success < start+size:
+            raise ValueError('Installed C2 key continuations leave their function')
+    else:
+        compare_index = next(i for i, name in calls if name == 'strncmp')
+        branch = instructions[compare_index+1]
+        if branch.mnemonic != 'cbz' or not branch.op_str.startswith('w0, #0x'):
+            raise ValueError('Unrecognized C2 key comparison continuation')
+        reject = instructions[compare_index+2].address
+        success = int(branch.op_str.split('#')[1], 16)
+    cleanup = list(md.disasm(raw[offset(success):offset(start)+size], success))
+    if not any(i.mnemonic == 'bl' and i.op_str.startswith('#0x') and
+               targets.get(int(i.op_str[1:], 16)) == 'munmap' for i in cleanup):
         raise ValueError('Missing original key mapping cleanup')
 
     # Position-independent AArch64 code; no extra imports, sections or code caves.
@@ -86,10 +102,11 @@ def pin_library(raw: bytes, public: bytes):
         0xd503201f,                                      # align literal
     ]
     patch = struct.pack('<14I', *words) + hashlib.sha1(public).digest()
+    if pinned and raw[at:at+56] != patch[:56]:
+        raise ValueError('Installed C2 key instructions differ from this installer')
     if entry+len(patch) > reject:
         raise ValueError('Key pin does not fit the original lookup region')
     patched = bytearray(raw)
-    at = offset(entry)
     patched[at:at+len(patch)] = patch
     sig_at = offset(signature_symbol['st_value'])
     sig_size = signature_symbol['st_size']

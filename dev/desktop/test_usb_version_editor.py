@@ -38,7 +38,7 @@ def test_bad_version_stops_before_device_access(tmp_path,version):
 def test_version_action_routes_and_ui_preserves_requested_target(tmp_path,monkeypatch):
     assert 'usb_set_version'in jobs.CAMERA_ACTIONS & jobs.POWER_ACTIONS
     with patch.object(usbrecovery,'set_version',return_value={'phase':'VERSION_SET'})as run:
-        assert worker.run('usb_set_version',{'target_version':'2.01'},tmp_path)['phase']=='VERSION_SET'
+        assert worker.run('usb_set_version',{'target_version':'2.01','power_confirmed':True},tmp_path)['phase']=='VERSION_SET'
         assert run.call_args.args[0]['target_version']=='2.01'
     app=W.QApplication.instance()or W.QApplication([])
     monkeypatch.setenv('A7C2_DESKTOP_DATA',str(tmp_path/'data'))

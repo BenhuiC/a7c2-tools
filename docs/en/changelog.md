@@ -1,5 +1,7 @@
 # Changelog
 
+- Restore the original-trust buttons in First Trust/Advanced Settings, allow completed public-key installation to repeat, and preserve the original same-body backup. Correct card-recovery completion guidance to manual 2.01 flashing.
+
 ## 3.10 release preparation — 2026-11-23
 
 - Keep version 3.10 and six bundled camera-ready looks on Windows/macOS; macOS has no driver-installation step.
