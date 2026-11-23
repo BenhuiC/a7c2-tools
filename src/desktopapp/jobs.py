@@ -56,6 +56,19 @@ def sound_summary(root):
     return {'sound-summary.json':summary}
 
 
+def trust_restore_summary(root,source):
+    """Inspect saved failure images on the PC; never reconnect to the camera."""
+    from . import updaterimage
+    paths=(root/'original-updater.private.img',Path(source)/'candidate-updater.private.img',
+           root/'current-updater.private.img')
+    if not all(p.is_file() for p in paths):
+        return dict(available=False,reason='本地恢复对照镜像不完整；原始文件未放入诊断包。')
+    if any(p.stat().st_size!=updaterimage.PARTITION_BYTES for p in paths):
+        return dict(available=False,reason='本地恢复对照镜像长度不符；原始文件未放入诊断包。')
+    _,report=updaterimage.restore_plan(*(p.read_bytes() for p in paths))
+    return dict(available=True,**report)
+
+
 def transaction_summaries(job):
     """Include original failure stages, never program/settings snapshots."""
     request_path=Path(job)/'request.private.json'
@@ -75,7 +88,7 @@ def transaction_summaries(job):
         children=[p.parent for p in sorted(root.glob('persistent-*/direct.private.json'),key=lambda p:p.stat().st_mtime_ns)[-3:]]
     fields=('schema','phase','mode','failed_during','error','error_type','completed_steps',
             'install_workspace','failed_install_workspaces','names_cleanup_pending',
-            'readonly_after_reload_verified','physical_checks_accepted')
+            'readonly_after_reload_verified','private_sound_files_removed','native_portrait','restore_voice')
     setup=root/'setup.private.json'
     if setup.is_file():
         state=json.loads(setup.read_text(encoding='utf-8'))
@@ -83,37 +96,70 @@ def transaction_summaries(job):
         children=[Path(state.get('install_workspace') or root/'install')]
         children.extend(Path(p) for p in state.get('failed_install_workspaces',[])[-5:])
     for i,child in enumerate(dict.fromkeys(children)):
+        trust=child/'trust-install.private.json'
+        if trust.is_file():
+            state=json.loads(trust.read_text(encoding='utf-8'))
+            keys=(*fields,'write_attempted','current_window','backup_verified','partition_readback_verified',
+                'new_boot_observed','updater_boot_verified','camera_io','physical_tested')
+            result['trust-summary-%d.json'%i]=direct_summary(state,keys)
+            source=state.get('source_workspace') or request.get('arguments',{}).get('source_workspace')
+            if state.get('mode')=='trust_restore' and source:
+                try:
+                    result['trust-restore-comparison-%d.json'%i]=trust_restore_summary(child,source)
+                except (OSError,ValueError) as exc:
+                    result['trust-restore-comparison-%d.json'%i]=dict(available=False,error=str(exc))
+        version=child/'version-restore.private.json'
+        if version.is_file():
+            state=json.loads(version.read_text(encoding='utf-8'))
+            keys=(*fields,'target_version','version_before_hex','version_after_hex',
+                'version_write_attempted','version_write_bytes','normal_usb_returned',
+                'program_writes','setting_writes','wbi_writes','reboot_performed',
+                'card_update_required','factory_restored','updater_trust_restored')
+            result['version-restore-summary-%d.json'%i]=direct_summary(state,keys)
         path=child/'direct.private.json'
-        if not path.is_file():continue
-        state=json.loads(path.read_text(encoding='utf-8'))
-        summary={k:state[k] for k in fields if k in state}
-        summary['journal']=[]
-        for event in state.get('journal',[]):
-            row={k:event[k] for k in ('event','stage','mode') if k in event}
-            if isinstance(event.get('result'),dict):
-                row['result']={k:event['result'][k] for k in ('phase','status','windows','mode',
-                    'staged','linked','committed','restored','rollback','remount','readonly','cleanup',
-                    'failure_group','failure_step','progress_bytes','available_bytes','required_bytes',
-                    'created','removed','source_sizes',
-                    'program','expected_bytes','actual_bytes','first_difference') if k in event['result']}
-                # These are public look indices/values, not program or sensor
-                # bytes. Keep the binding report that older exports discarded.
-                native=event['result']
-                targets=native.get('targets')
-                if isinstance(targets,list) and targets and all(isinstance(t,dict)
-                        and t.get('key') in {*(0x02cf0cd0+2*i for i in range(6)),0x02cf1287,0x02cf1289}
-                        and type(t.get('index')) is int and t['index'] in range(10,18)
-                        and type(t.get('value')) is int and t['value'] in range(12) for t in targets):
-                    row['result']['targets']=[{k:t[k] for k in ('key','index','value')} for t in targets]
-                    for key in ('before','after'):
-                        value=native.get(key)
-                        if isinstance(value,list) and len(value)==18 and all(type(v) is int and 0<=v<=0xffffffff for v in value):
-                            row['result'][key]=value
-                    for key in ('current','changed_mask'):
-                        if type(native.get(key)) is int:row['result'][key]=native[key]
-            summary['journal'].append(row)
-        result['direct-summary-%d.json'%i]=summary
+        if path.is_file():
+            state=json.loads(path.read_text(encoding='utf-8'))
+            result['direct-summary-%d.json'%i]=direct_summary(state,fields)
+        for n,temporary in enumerate(sorted(child.glob('direct.private.json.*.new'),key=lambda p:p.stat().st_mtime_ns)[-3:]):
+            try:
+                pending=json.loads(temporary.read_text(encoding='utf-8'))
+                summary=direct_summary(pending,fields)
+            except (OSError,ValueError,TypeError) as exc:
+                summary={'read_error':str(exc)}
+            summary['record_status']='unpublished-host-journal'
+            result['direct-pending-%d-%d.json'%(i,n)]=summary
     return result
+
+
+def direct_summary(state,fields):
+    summary={k:state[k] for k in fields if k in state}
+    summary['journal']=[]
+    for event in state.get('journal',[]):
+        row={k:event[k] for k in ('event','stage','mode') if k in event}
+        if isinstance(event.get('result'),dict):
+            row['result']={k:event['result'][k] for k in ('phase','status','windows','mode',
+                'staged','linked','committed','restored','rollback','remount','readonly','cleanup',
+                'failure_group','failure_step','progress_bytes','available_bytes','required_bytes',
+                'created','removed','source_sizes',
+                'resource_kind','resource_file','index','requested_offset','requested_bytes',
+                'program','expected_bytes','actual_bytes','first_difference') if k in event['result']}
+            # These are public look indices/values, not program or sensor
+            # bytes. Keep the binding report that older exports discarded.
+            native=event['result']
+            targets=native.get('targets')
+            if isinstance(targets,list) and targets and all(isinstance(t,dict)
+                    and t.get('key') in {*(0x02cf0cd0+2*i for i in range(6)),0x02cf1287,0x02cf1289}
+                    and type(t.get('index')) is int and t['index'] in range(10,18)
+                    and type(t.get('value')) is int and t['value'] in range(12) for t in targets):
+                row['result']['targets']=[{k:t[k] for k in ('key','index','value')} for t in targets]
+                for key in ('before','after'):
+                    value=native.get(key)
+                    if isinstance(value,list) and len(value)==18 and all(type(v) is int and 0<=v<=0xffffffff for v in value):
+                        row['result'][key]=value
+                for key in ('current','changed_mask'):
+                    if type(native.get(key)) is int:row['result'][key]=native[key]
+        summary['journal'].append(row)
+    return summary
 
 
 def export_support(job, destination):

@@ -57,7 +57,8 @@ def test_current_state_probe_compiles_and_reads_stock_or_custom_without_a_job(st
     assert result['model_index']==16
 
 
-@pytest.mark.parametrize('action,mode',[('sound_on','sound_enable'),('sound_off','sound_disable'),('sound_restore_sound','sound_restore')])
+@pytest.mark.parametrize('action,mode',[('sound_on','sound_enable'),('sound_off','sound_disable'),('sound_restore_sound','sound_reset'),
+    ('sound_mechanical_on','sound_mechanical_enable'),('sound_mechanical_off','sound_mechanical_disable')])
 def test_desktop_switch_and_restore_ignore_missing_or_unreadable_old_job(tmp_path,action,mode):
     root=tmp_path/'sound';root.mkdir();(root/'sound.private.json').write_text('unreadable old state')
     job=tmp_path/'run';job.mkdir()
@@ -78,7 +79,7 @@ def test_current_verify_uses_no_saved_installation_record(tmp_path):
         def temp_read(self,name,missing=False):return None
     path=tmp_path/'probe';path.write_bytes(b'read-only probe')
     with patch('trial.factory',return_value=Camera()),patch('candidate.is_enabled',return_value=False), \
-         patch('candidate.guard'),patch('candidate.require_registry'),patch('boot_sound.installed',return_value=False), \
+         patch('candidate.guard'),patch('candidate.sound_state',return_value='off'),patch('candidate.require_registry'),patch('boot_sound.installed',return_value=False), \
          patch('boot_trial.current_probe',return_value=path),patch('looktool.devicesession.invoke',return_value={}), \
          patch.object(sound_cli,'verify',side_effect=AssertionError('No old-job verifier')):
         result=worker.run('sound_verify',dict(workspace=str(root),accepted=False),tmp_path)
@@ -98,9 +99,7 @@ def test_volume_buttons_ignore_unresolved_camera_tasks(tmp_path,options):
     assert reports[0]['camera_io'] is False and (root/'sound.private.json').read_bytes()==before
 
 
-@pytest.mark.parametrize('command',['audio','recovery'])
-def test_optional_confirmation_does_not_require_a_previous_task(tmp_path,command):
-    root,state=sound_cli.workspace(tmp_path/'sound',True,tmp_path/'backup')
-    state.update(audio_job=str(root/'missing'),pending=dict(command='old',job='missing'))
-    result=(sound_cli.confirm_audio(root,state,'correct') if command=='audio' else sound_cli.confirm_recovery(root,state))
-    assert result['camera_io'] is False and state['pending'] is None
+def test_manual_confirmation_commands_are_removed():
+    assert not hasattr(sound_cli,'confirm_audio')
+    assert not hasattr(sound_cli,'confirm_recovery')
+    assert 'confirm-recovery' not in sound_cli.parser().format_help()

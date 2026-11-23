@@ -52,10 +52,13 @@ def color_regions():
     return result
 
 
-def plan(current, records, mode, *, factory=None, slot=None, look=None, name=None):
+def plan(current, records, mode, *, factory=None, slot=None, look=None, name=None,restore_voice=True):
     """Pure planning: preserve every field outside the declared project scope."""
     _, core = modules()
     ap, cp = current['appFw.so'], current['cpapp-b.bin']
+    from . import fixedbankcode
+    if mode=='factory_reset'and fixedbankcode.present(cp):
+        raise ValueError('This fixed firmware is restored by firmware reflashing')
     target = dict(current)
     wanted = [{}, {}]
     rename = None
@@ -67,13 +70,18 @@ def plan(current, records, mode, *, factory=None, slot=None, look=None, name=Non
     if mode == 'factory_reset':
         if factory is None:
             raise ValueError('Prepare the original Sony 2.01 reference first')
+        if factory.get('schema')=='a7c2-factory-layout/1':
+            raise ValueError('恢复布局清单不包含原厂字节，请先提供官方固件或可用同机原始备份')
         regional = factory.get('schema') == 'a7c2-factory-regions/1'
         for program in checkpoint.PROGRAM_PATHS:
             if regional:
                 spec = factory['programs'][program]
                 if factory['model'] != 'ILCE-7CM2' or factory['version'] != '2.01' or len(current[program]) != spec['bytes']:
                     raise ValueError('Original reference model/version/program size differs')
-                result = bytearray(current[program])
+                from . import fixedlooks
+                original=current[program]
+                if program=='appFw.so' and fixedlooks.present(original):original=fixedlooks.restore(original)
+                result = bytearray(original)
                 for region in spec['regions']:
                     raw = zlib.decompress(base64.b64decode(region['zlib_base64']))
                     at, size = region['offset'], region['bytes']
@@ -86,6 +94,10 @@ def plan(current, records, mode, *, factory=None, slot=None, look=None, name=Non
                     raise ValueError('Original and current program sizes differ')
                 target[program] = factory[program]
         wanted[0] = recipe_defaults(target['appFw.so'], range(1, 7))
+        from . import capturedefaults,voicelock
+        wanted[0].update(capturedefaults.mechanical(target['appFw.so'],records))
+        wanted[0].update(voicelock.settings(target['appFw.so'],records))
+        if voicelock.active(ap):target['appFw.so']=voicelock.patch(target['appFw.so'],not restore_voice)
         wanted[0].update({key: b'\0' for key in checkpoint.AP_KEYS})
         # The current selection must not keep pointing at a removed FL23 entry.
         row=struct.unpack_from('<8I',target['appFw.so'],0x57c6710-32)
@@ -111,20 +123,41 @@ def plan(current, records, mode, *, factory=None, slot=None, look=None, name=Non
         for filename in nameworker.filenames():
             key = 'resources/' + filename
             target[key] = resources.before_custom(current[key])
+    elif mode in ('voice_disable','voice_unlock'):
+        from . import voicelock
+        target['appFw.so']=voicelock.patch(ap,mode=='voice_disable')
+        wanted[0].update(voicelock.settings(ap,records))
+    elif mode in ('preview_native', 'preview_legacy', 'preview_pending'):
+        from . import uploadgate, uploadpending
+        base = uploadpending.normalize(cp) if mode == 'preview_pending' or uploadpending.active(cp) else cp
+        identity = device_layout.structural(ap, base)
+        if identity.get('first_install') or not identity['mask']:
+            raise ValueError('本测试只用于已安装自定义 LUT 的相机；本次没有写入。')
+        change = {'preview_native': uploadgate.restore, 'preview_legacy': uploadgate.restore_legacy_for_test,
+                  'preview_pending': uploadpending.install}[mode]
+        target['cpapp-b.bin'] = change(base)
+    elif mode in ('wb_enable', 'wb_disable'):
+        from . import whitebalance
+        target['cpapp-b.bin'] = whitebalance.plan(cp, mode == 'wb_enable')
     elif mode in ('vertical_enable', 'vertical_disable'):
         from .verticalpersist import field
         wanted[0].update(field(ap, records, mode == 'vertical_enable'))
-    elif mode=='sound_restore':
+    elif mode in ('sound_restore','sound_reset'):
         import sys
         sys.path.insert(0,str(nativebuild.ROOT/'src/shutter_sound'))
         import boot_sound
         target['appFw.so']=boot_sound.restore_plan(ap)[0]
-    elif mode in ('sound_enable','sound_disable'):
+        if mode=='sound_reset':
+            import candidate
+            target.update(candidate.disable(target['appFw.so'],cp))
+    elif mode in ('sound_enable','sound_disable','sound_mechanical_enable','sound_mechanical_disable'):
         import sys
         sys.path.insert(0,str(nativebuild.ROOT/'src/shutter_sound'))
         import candidate
-        desired=mode=='sound_enable'
-        target.update(candidate.patch(ap,cp) if desired else candidate.disable(ap,cp))
+        if mode.startswith('sound_mechanical_'):
+            target.update(candidate.mechanical(ap,cp,mode=='sound_mechanical_enable'))
+        else:
+            target.update(candidate.patch(ap,cp) if mode=='sound_enable' else candidate.disable(ap,cp))
     elif mode == 'fl23_enable':
         import compat
         target.update(compat.plan(ap, cp, '2.01', transitions=False)[2])
@@ -150,10 +183,10 @@ def plan(current, records, mode, *, factory=None, slot=None, look=None, name=Non
     elif mode in ('slot_default', 'look_import'):
         identity = device_layout.structural(ap, cp)
         wanted[0] = recipe_defaults(ap, [slot])
-        bank = photoformat.extract_bank(cp, records[1][0x02a40001].data,
-            records[1][0x02a4000d].data, gamma_table_va=0x1209480,
-            regular_row=0, still_row=10, color_parameter=0)[0] if photoio.present(cp) else None
         if mode == 'slot_default':
+            bank = photoformat.extract_bank(cp, records[1][0x02a40001].data,
+                records[1][0x02a4000d].data, gamma_table_va=0x1209480,
+                regular_row=0, still_row=10, color_parameter=0)[0] if photoio.present(cp) else None
             raw = bytes(six.TABLE_BYTES)
             if identity['kind'] != 'legacy-six' and not identity.get('first_install'):
                 target.update(device_layout.deactivate(ap, cp, slot, raw, hash_checks=False, native_bank=bank, transitions=False)[2])
@@ -163,7 +196,7 @@ def plan(current, records, mode, *, factory=None, slot=None, look=None, name=Non
         else:
             from . import lookfile
             raw = lookfile.writer_document(look)
-            stage = look.get('native_photo')
+            stage = look.get('edit_native',look.get('native_photo'))
             base_cp = device_layout.replace(ap, cp, {slot: raw}, hash_checks=False, transitions=False)[2]['cpapp-b.bin'] if identity.get('first_install') else cp
             bank = photoformat.extract_bank(base_cp, records[1][0x02a40001].data,
                 records[1][0x02a4000d].data, gamma_table_va=0x1209480,
@@ -185,6 +218,11 @@ def plan(current, records, mode, *, factory=None, slot=None, look=None, name=Non
         from verticaltool import portraitlayout
         if portraitlayout.active(target['appFw.so']):
             target['appFw.so']=portraitlayout.references(target['appFw.so'],False)[0]
+    if mode == 'look_import':
+        # Desktop single-slot and combined installs use the owner-tested
+        # acknowledgment layout, including fresh stock/FL23 bootstraps.
+        from . import uploadpending
+        target['cpapp-b.bin'] = uploadpending.install(target['cpapp-b.bin'])
     return target, wanted, rename
 
 
@@ -294,10 +332,15 @@ class DirectJob(Rollback):
             print('已清理旧任务遗留的名称备份 %d 个，释放相机 /usr 空间。' % result['removed'], flush=True)
         return result
 
+    def cleanup_sound_resources(self,camera):
+        from .resourceworker import Resources
+        Resources(camera,self,'sound').delete()
+        self.state['private_sound_files_removed']=True
+
     def resume_install_settings(self,failed_workspace,*,power_confirmed):
         """Finish a known completed-program install, without a program writer."""
         from . import settingsresume,bundle
-        require_power(confirmed=power_confirmed)
+        power = require_power(confirmed=power_confirmed)
         prior_root,prior=settingsresume.source(failed_workspace)
         if self.root.exists() and any(self.root.iterdir()):
             raise ValueError('Use a fresh settings continuation directory')
@@ -305,7 +348,7 @@ class DirectJob(Rollback):
         self.state=dict(schema='a7c2-direct-job/1',mode='install_all',slot=None,name=None,
             job_id=uuid.uuid4().hex[:16],journal=[],backup_created=False,
             bundle_options=prior['bundle_options'],settings_resume_from=str(prior_root),program_builds=[],
-            power_confirmation=require_power(confirmed=True))
+            power_confirmation=power)
         if prior.get('names_cleanup_pending'):
             self.state.update(names_cleanup_pending=True,forward_name_build=prior['forward_name_build'])
             header=self.root/'names/names.private.h';header.parent.mkdir()
@@ -388,69 +431,11 @@ class DirectJob(Rollback):
             decode=lambda raw: nameworker.validate(raw, mode, build,allow_completed_busy=True), record=self.record,
             save_raw=lambda raw: self.raw('names-forward-' + str(mode) + '.bin', raw))
 
-    def resume_factory_names(self, failed_workspace, *, power_confirmed, factory_values):
-        """A new, user-selected continuation; completed program batches never run."""
-        from . import directresume
-        require_power(confirmed=power_confirmed)
-        prior_root, prior, raw = directresume.source(failed_workspace)
-        if self.root.exists() and any(self.root.iterdir()):
-            raise ValueError('Use a fresh continuation directory')
-        self.root.mkdir(parents=True, exist_ok=True)
-        self.state = dict(schema='a7c2-direct-job/1', mode='factory_reset', slot=None, name=None,
-            factory_path=prior['factory_path'], identity=prior['identity'], job_id=uuid.uuid4().hex[:16],
-            resume_from=str(prior_root), journal=[], backup_created=False,
-            power_confirmation=require_power(confirmed=True))
-        self.save('READING')
-        try:
-            with self.factory(prior['identity']) as camera:
-                current = self.capture(camera)
-                directresume.program_bytes(current, prior_root, prior)
-                target, wanted, _ = plan(current, camera.records(current['settings-ram.bin']),
-                    'factory_reset', factory=factory_values)
-                if any(current[p] != target[p] for p in checkpoint.PROGRAM_PATHS):
-                    raise ValueError('Factory program regions differ; continuation will not write programs')
-                prepared = self.settings(camera, current, wanted)
-                names = checkpointworker.build_names(current, target, self.root / 'worker', self.state['job_id'], self.zig)
-                directresume.cleanup(camera, prior_root, prior, raw, self.record)
-                from .factoryrecover import supersede_temporary
-                supersede_temporary(camera,self.root/'evidence/superseded-temporary',self.record)
-                self.prepare_vertical(camera)
-                runtime = self.native(camera, 'runtime', 0)
-                if runtime['image_mode'].strip() not in ('0', '2') or not runtime.get('boot_id', '').strip():
-                    raise ValueError('Runtime state is unavailable; no restoration started')
-                previous = next(r['result'] for r in prior['journal'] if r.get('event') == 'native_result_verified'
-                    and 'spans' in r.get('result', {}))
-                old_spans = {(s['offset'], s['length']): s['memory'] for s in previous['spans']}
-                for span in runtime['spans']:
-                    target_bytes = target['appFw.so'][span['offset']:span['offset'] + span['length']].hex()
-                    if span['disk'] != target_bytes or span['memory'] not in (target_bytes, old_spans.get((span['offset'], span['length']))):
-                        raise ValueError('Unexpected loaded application state; no restoration started')
-                self.state['source_boot_id'] = runtime['boot_id'].strip()
-                self.purge_stale_backups(camera)
-                if names:
-                    self.native(camera, 'names', 4, names)
-                self.save('PREFLIGHT_VERIFIED', program_builds=[], inverse_name_build=names, forward_name_build=None)
-                print('只继续名称、设置与重新加载准备，不重复写入程序。', flush=True)
-                self.save('WRITING')
-                prepared=self.prepare_factory_settings(camera,prepared)
-                if names:
-                    self.native(camera, 'names', 2, names)
-                self.readback(camera, target)
-                self.restore_settings(camera, prepared)
-                if runtime['image_mode'].strip() == '2':
-                    self.native(camera, 'wbi', 0)
-                    self.native(camera, 'wbi', 1)
-            self.save('AWAITING_RELOAD')
-            print('续接写入和读回已结束，恢复尚未完成：请拔 USB 和其他外部供电，等存取灯停止闪烁，再正常关机并等屏幕和灯完全熄灭；取下电池至少一分钟，再装回开机、接回 USB，点击“重启后核对并完成恢复”。', flush=True)
-            return self.state
-        except BaseException as exc:
-            self.save('NEEDS_REVIEW', error=str(exc))
-            raise
 
     def run_direct(self, mode, *, version, power_confirmed, factory_values=None,
                    factory_path=None, slot=None, look_path=None, name=None, bundle_options=None,
-                   recovery_identity=None,recovery_source=None):
-        require_power(confirmed=power_confirmed)
+                   recovery_source=None,voice_source=None,restore_voice=True):
+        power = require_power(confirmed=power_confirmed)
         if version != '2.01':
             raise ValueError('Direct operations support ILCE-7CM2 2.01 only')
         if self.root.exists() and any(self.root.iterdir()):
@@ -465,37 +450,56 @@ class DirectJob(Rollback):
             from . import lookfile
             look = lookfile.read(look_path)
             lookfile.writer_document(look)
+            from .iconfile import reject_device_import
+            reject_device_import(look)
             (self.root / 'reference.a7look').write_bytes(Path(look_path).read_bytes())
         self.state = dict(schema='a7c2-direct-job/1', mode=mode, slot=slot, name=name,
             factory_path=factory_path, job_id=uuid.uuid4().hex[:16], journal=[], backup_created=False,
-            power_confirmation=require_power(confirmed=True))
+            power_confirmation=power)
+        if mode=='factory_reset':self.state['restore_voice']=restore_voice
         if mode=='factory_reset' and recovery_source:self.state['supersedes_workspace']=str(recovery_source)
         if mode == 'install_all':self.state['bundle_options'] = bundle_options
         self.save('READING')
         resource_pause=False
         try:
-            context=(self.recovery_session(recovery_identity) if mode=='factory_reset' and recovery_identity else self.factory())
-            with context as camera:
+            with self.factory() as camera:
                 self.state['identity'] = camera.identity
-                if mode in ('sound_enable','sound_disable','sound_restore'):
+                if mode=='factory_reset' and factory_values and factory_values.get('source_identity'):
+                    checkpoint.same_body(factory_values['source_identity'],camera.identity)
+                if mode in ('sound_enable','sound_disable','sound_restore','sound_reset','sound_mechanical_enable','sound_mechanical_disable'):
                     import sys
                     sys.path.insert(0,str(nativebuild.ROOT/'src/shutter_sound'))
                     from replacement import prepare_current
                     prepare_current(camera,self.root/'evidence/sound-current',mode)
-                if mode=='factory_reset':
-                    from .factoryrecover import supersede_temporary
+                else:
+                    from .requestcleanup import supersede_temporary
                     supersede_temporary(camera,self.root/'evidence/superseded-temporary',self.record)
                 current = self.capture(camera)
+                if mode=='factory_reset':
+                    from . import voicelock
+                    if restore_voice and voicelock.active(current['appFw.so']):
+                        if not voice_source:
+                            raise ValueError('语音空间清理已启用。请先选择索尼官方 2.01 BODYDATA.DAT，再一键恢复；'
+                                '必须完整补回语音文件后才能解除关闭限制，本次尚未恢复程序。')
+                        from .resourceworker import restore_voice as restore_voice_resources
+                        from .verticalresources import release
+                        _,reset_fields,_=plan(current,camera.records(current['settings-ram.bin']),
+                            'factory_reset',factory=factory_values,restore_voice=restore_voice)
+                        restore_voice_resources(camera,self,voice_source,
+                            before_restore=lambda:release(camera,self,current,wanted=reset_fields))
+                if mode in ('preview_native', 'preview_legacy', 'preview_pending'):
+                    from . import uploadgate
+                    self.state['preview_source_entry'] = current['cpapp-b.bin'][uploadgate.OFFSET:uploadgate.OFFSET + 4].hex()
                 if mode == 'install_all':
                     target, wanted, rename = bundle.plan(current, camera.records(current['settings-ram.bin']), bundle_options, bundle_rows)
                 else:
                     target, wanted, rename = plan(current, camera.records(current['settings-ram.bin']), mode,
-                        factory=factory_values, slot=slot, look=look, name=name)
+                        factory=factory_values, slot=slot, look=look, name=name,restore_voice=restore_voice)
                 # Preserve the independent saved calibration when reconstructing
                 # CP units; only the declared FL23 subranges use factory data.
                 prepared = self.settings(camera, current, wanted)
                 priority=(lambda row:(row[0],row[1])) if mode=='factory_reset' else None
-                if mode=='sound_restore':
+                if mode in ('sound_restore','sound_reset'):
                     import boot_sound
                     priority=boot_sound.restore_priority
                 programs = checkpointworker.build_programs(current, target, self.root / 'worker', self.zig,
@@ -521,7 +525,9 @@ class DirectJob(Rollback):
                 if runtime['image_mode'].strip() not in ('0', '2'):
                     raise ValueError('Unsupported retained image state')
                 self.prepare_vertical(camera)
-                planned_change = bool(mode=='sound_restore' or programs or inverse_names or (forward and not forward.get('unchanged'))
+                # A full reset must also discard temporary RAM sound registration,
+                # even when the program files already match the factory bytes.
+                planned_change = bool(mode in ('factory_reset','sound_restore','sound_reset') or programs or inverse_names or (forward and not forward.get('unchanged'))
                     or (self.vertical_stage and self.vertical_stage.needs_change)
                     or (mode == 'factory_reset' and runtime.get('usr_mount_readonly') is not True)
                     or prepared[1] != prepared[3] or prepared[2] != prepared[4])
@@ -588,22 +594,21 @@ class DirectJob(Rollback):
                     self.readback(camera, target)
                     self.save('RESTORING_SETTINGS')
                     self.restore_settings(camera, prepared)
-                    changed = planned_change
                     self.save('PREPARING_RELOAD')
-                    if changed and runtime['image_mode'].strip() == '2':
+                    if planned_change and runtime['image_mode'].strip() == '2':
                         self.native(camera, 'wbi', 0)
                         self.native(camera, 'wbi', 1)
-                    if not changed and self.vertical_stage:self.vertical_stage.verify_loaded()
-                    if not changed and mode=='factory_reset':
+                    if not planned_change and self.vertical_stage:self.vertical_stage.verify_loaded()
+                    if not planned_change and mode=='factory_reset':
                         self.state['readonly_after_reload_verified']=True
             if resource_pause:
                 self.save('AWAITING_RESOURCE_RELOAD')
                 print('所有读写已结束。68 个名称已完整核对，程序和配方尚未写入。旧资源仍被占用，需要断电重开释放后，再点同一按钮继续；不重复写名称。',flush=True)
                 return self.state
-            self.save('AWAITING_RELOAD' if changed else 'LOADED', raw_profile_effective_since=datetime.now().isoformat(timespec='microseconds'))
-            if changed and mode in ('fl23_enable','fl23_disable'):
+            self.save('AWAITING_RELOAD' if planned_change else 'LOADED', raw_profile_effective_since=datetime.now().isoformat(timespec='microseconds'))
+            if planned_change and mode in ('fl23_enable','fl23_disable'):
                 print('安装／关闭任务已结束，没有后续待写入步骤。以下断电仅用于让相机加载已写入的程序，电脑端核对可选。',flush=True)
-            print('所有读写已结束。拔 USB 和其他外部供电，等存取灯停止闪烁，再正常关机并等屏幕和灯完全熄灭；取下电池至少一分钟，再装回开机、检查功能并核对。' if changed else '磁盘与设置已符合目标，本次没有重复写入；实际预览、照片和声音仍需在机身检查。', flush=True)
+            print('所有读写已结束。拔 USB 和其他外部供电，等存取灯停止闪烁，再正常关机并等屏幕和灯完全熄灭；取下电池至少一分钟，再装回开机、检查功能并核对。' if planned_change else '磁盘与设置已符合目标，本次没有重复写入；实际预览、照片和声音仍需在机身检查。', flush=True)
             return self.state
         except BaseException as exc:
             self.save('NEEDS_REVIEW', error=str(exc))
@@ -612,7 +617,7 @@ class DirectJob(Rollback):
     def prepare_names_reload(self,failed_workspace,*,power_confirmed):
         """Recover the completed-name/RO-busy boundary without program writes."""
         from . import namespause
-        require_power(confirmed=power_confirmed)
+        power = require_power(confirmed=power_confirmed)
         prior_root,prior,raw=namespause.source(failed_workspace)
         if prior['phase']!='NEEDS_REVIEW':raise ValueError('Use the saved resource reload checkpoint')
         if self.root.exists() and any(self.root.iterdir()):raise ValueError('Use a fresh recovery directory')
@@ -620,7 +625,7 @@ class DirectJob(Rollback):
         self.state={k:v for k,v in prior.items() if k not in ('journal','phase','error','job_id')}
         self.state.update(job_id=uuid.uuid4().hex[:16],journal=[],resume_from=str(prior_root),
             program_source_workspace=str(prior_root),readonly_deferred_busy=True,names_cleanup_pending=False,
-            power_confirmation=require_power(confirmed=True))
+            power_confirmation=power)
         if prior['mode']=='look_import':
             (self.root/'reference.a7look').write_bytes((prior_root/'reference.a7look').read_bytes())
         self.save('READING');self.raw('names-forward-1.bin',raw)
@@ -659,91 +664,6 @@ class DirectJob(Rollback):
         self.save('RESOURCE_RELOAD_VERIFIED',resource_reload_verified=True,resource_boot_id=runtime['boot_id'].strip())
         return self.state
 
-    def continue_factory(self, failed_workspace, *, power_confirmed, factory_values):
-        """Re-plan an interrupted factory reset from fresh bytes, stage by stage."""
-        from . import factoryrecover
-        require_power(confirmed=power_confirmed)
-        history = factoryrecover.chain(failed_workspace)
-        prior_root, prior = history[-1]
-        if prior['phase'] in factoryrecover.FINISHED:
-            raise ValueError('恢复写入已结束，请核对重新加载状态，不重复写入')
-        if self.root.exists() and any(self.root.iterdir()):
-            raise ValueError('Use a new continuation directory; keep earlier evidence')
-        self.root.mkdir(parents=True, exist_ok=True)
-        self.state = dict(schema='a7c2-direct-job/1', mode='factory_reset', slot=None, name=None,
-            factory_path=prior['factory_path'], identity=prior['identity'], job_id=uuid.uuid4().hex[:16],
-            resume_from=str(prior_root), journal=[], backup_created=False,
-            power_confirmation=require_power(confirmed=True))
-        self.save('READING')
-        try:
-            with self.recovery_session(prior['identity']) as camera:
-                current = self.capture(camera)
-                factoryrecover.known_programs(current, history)
-                target, wanted, _ = plan(current, camera.records(current['settings-ram.bin']),
-                    'factory_reset', factory=factory_values)
-                prepared = self.settings(camera, current, wanted)
-                programs = checkpointworker.build_programs(current, target, self.root / 'worker', self.zig,
-                    window_priority=lambda row:(row[0],row[1]))
-                names = checkpointworker.build_names(current, target, self.root / 'worker', self.state['job_id'], self.zig,
-                                                     defer_busy_readonly=True)
-                self.save('PLANNED', program_builds=programs, inverse_name_build=names, forward_name_build=None)
-                content_complete = not programs and names is None
-                if content_complete:
-                    self.readback(camera, target)
-                recovered = factoryrecover.cleanup(camera, history, self.record, self.raw,
-                    allow_completed_name_mount_busy=content_complete) or {}
-                if recovered.get('readonly_deferred_busy'):
-                    self.state['readonly_deferred_busy'] = True
-                    print('已完整读回确认程序与名称均符合原厂目标；只继续设置和重新加载准备，只读挂载将在新开机后核对。', flush=True)
-                factoryrecover.supersede_temporary(camera,self.root/'evidence/superseded-temporary',self.record)
-                runtime = self.native(camera, 'runtime', 0)
-                self.prepare_vertical(camera)
-                if runtime['image_mode'].strip() not in ('0', '2') or not runtime.get('boot_id', '').strip():
-                    raise ValueError('无法确认当前加载状态；尚未开始续接写入')
-                earlier = [r['result']['spans'] for _, state in history for r in state.get('journal', [])
-                    if r.get('event') == 'native_result_verified' and 'spans' in r.get('result', {})]
-                for span in runtime['spans']:
-                    at, size = span['offset'], span['length']
-                    allowed = {s['memory'] for spans in earlier for s in spans if s['offset'] == at and s['length'] == size}
-                    allowed.add(target['appFw.so'][at:at + size].hex())
-                    if span['disk'] != current['appFw.so'][at:at + size].hex() or span['memory'] not in allowed:
-                        raise ValueError('运行中程序与已记录的原状态／目标不符；保留日志，不自动重试')
-                self.state['source_boot_id'] = runtime['boot_id'].strip()
-                for build in programs:
-                    self.native(camera, 'program', 0, build)
-                self.purge_stale_backups(camera)
-                if names:
-                    self.native(camera, 'names', 4, names)
-                self.save('PREFLIGHT_VERIFIED')
-                print('续接计划：剩余程序批次 %d，剩余名称文件 %d；已符合目标的内容不重复写入。' %
-                      (len(programs), names['count'] if names else 0), flush=True)
-                self.save('WRITING')
-                prepared=self.prepare_factory_settings(camera,prepared)
-                for build in programs:
-                    self.native(camera, 'program', 1, build)
-                for program, path in checkpoint.PROGRAM_PATHS.items():
-                    if camera.read(path) != target[program]:
-                        raise ValueError('Complete program readback differs: ' + program)
-                self.record('complete_program_bytes_verified')
-                self.save('RESTORING_NAMES')
-                if names:
-                    name_result = self.native(camera, 'names', 2, names)
-                    if name_result and name_result.get('readonly_deferred_busy'):
-                        self.state['readonly_deferred_busy'] = True
-                        print('名称内容已完成；只读挂载忙碌，待完成设置后断电重开核对。', flush=True)
-                self.readback(camera, target)
-                self.save('RESTORING_SETTINGS')
-                self.restore_settings(camera, prepared)
-                self.save('PREPARING_RELOAD')
-                if runtime['image_mode'].strip() == '2':
-                    self.native(camera, 'wbi', 0)
-                    self.native(camera, 'wbi', 1)
-            self.save('AWAITING_RELOAD')
-            print('恢复完成，所有读写已结束。拔 USB 和其他外部供电，等存取灯停止闪烁，再正常关机并等屏幕和灯完全熄灭；取下电池至少一分钟，再装回开机、检查并核对。', flush=True)
-            return self.state
-        except BaseException as exc:
-            self.save('NEEDS_REVIEW', error=str(exc))
-            raise
 
     @contextmanager
     def recovery_session(self, expected):
@@ -760,7 +680,7 @@ class DirectJob(Rollback):
                     mark_unknown()
                 raise
 
-    def verify_direct(self, *, factory_values=None, accepted=False):
+    def verify_direct(self, *, factory_values=None):
         self.state = json.loads(self.state_path.read_text(encoding='utf-8'))
         if self.state['phase'] not in ('AWAITING_RELOAD', 'LOADED', 'COMPLETE'):
             raise ValueError('Inspect the unfinished transaction before another write')
@@ -776,7 +696,8 @@ class DirectJob(Rollback):
                 target, wanted, _ = bundle.plan(current, camera.records(current['settings-ram.bin']), options, selected)
             else:
                 target, wanted, _ = plan(current, camera.records(current['settings-ram.bin']), self.state['mode'],
-                    factory=factory_values, slot=self.state['slot'], look=look, name=self.state['name'])
+                    factory=factory_values, slot=self.state['slot'], look=look, name=self.state['name'],
+                    restore_voice=self.state.get('restore_voice',True))
             for program in checkpoint.PROGRAM_PATHS:
                 difference=program_difference(target[program],current[program])
                 if difference:
@@ -794,7 +715,7 @@ class DirectJob(Rollback):
                         differs = (any(actual[at:at + size] != value[at:at + size] for at, size in color_regions()[key])
                                    if chip == 1 else actual != value)
                         if differs:
-                            raise ContentChanged('Reloaded default setting differs')
+                            raise ContentChanged('Reloaded default setting differs: chip%d/%#x'%(chip,key))
             from . import verticalpersist
             if verticalpersist.SETTING in wanted[0]:
                 verticalpersist.Stage(camera, self, wanted[0][verticalpersist.SETTING] == b'\0').verify_loaded()
@@ -822,8 +743,10 @@ class DirectJob(Rollback):
                 self.forward_names(camera, build, 3)
                 self.state['names_cleanup_pending'] = False
                 self.record('name_backups_removed_after_new_boot')
-        self.save('COMPLETE' if accepted else 'LOADED', physical_checks_accepted=accepted)
-        if accepted and self.state['mode'] in ('look_import', 'slot_default', 'factory_reset', 'install_all'):
+            if self.state['mode']=='factory_reset':
+                self.cleanup_sound_resources(camera)
+        self.save('LOADED')
+        if self.state['mode'] in ('look_import', 'slot_default', 'factory_reset', 'install_all'):
             from .rawidentity import after_verified
             slots = list(range(1, 7)) if self.state['mode'] == 'factory_reset' else [self.state['slot']]
             documents = [dict(name='ST', raw_profile=None) for _ in slots]

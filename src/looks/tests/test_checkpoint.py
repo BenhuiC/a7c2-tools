@@ -123,7 +123,7 @@ class CheckpointTests(unittest.TestCase):
         with patch.object(firmware,'sha',side_effect=AssertionError('No SHA admission')):
             state=job.run(self.archive.parent,100,'2.01')
             self.assertEqual(state['phase'],'RESTORED_AWAITING_RELOAD')
-            self.assertEqual(job.verify(True)['phase'],'COMPLETE')
+            self.assertEqual(job.verify()['phase'],'LOADED')
         for n,p in checkpoint.PROGRAM_PATHS.items():self.assertEqual(c.files[p],self.original[n])
         for n in nameworker.filenames():self.assertEqual(c.files['/usr/share/app/'+n],self.original['resources/'+n])
         self.assertTrue(all(c.property_read(k)==b'\0' for k in KEYS))
@@ -194,7 +194,7 @@ class CheckpointTests(unittest.TestCase):
         with patch('looktool.devicesession.modules',return_value=(None,SimpleNamespace(backup_records=records))):
             state=job.run(backup,100,'2.01')
         self.assertEqual(state['phase'],'RESTORED_AWAITING_RELOAD')
-        self.assertEqual(job.verify(True)['phase'],'COMPLETE')
+        self.assertEqual(job.verify()['phase'],'LOADED')
         _,target=checkpoint.read(job.root/'target.private.zip')
         self.assertEqual(target,self.original)
         self.assertFalse((backup/'checkpoint.private.zip').exists())

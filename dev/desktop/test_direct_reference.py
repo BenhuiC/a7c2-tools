@@ -19,6 +19,65 @@ from looktool.devicesession import modules
 @unittest.skipUnless(os.environ.get('A7C2_ORIGINAL_REFERENCE') and os.environ.get('A7C2_RESEARCH_FIXTURES'),
                      'Needs private reference and known program fixtures; never a camera')
 class ReferencePlanningTests(unittest.TestCase):
+    def test_factory_reset_without_voice_restore_preserves_disabled_menu(self):
+        from looktool import voicelock
+        current=dict(self.current,**{'appFw.so':voicelock.patch(self.current['appFw.so'])})
+        target,wanted,_=direct.plan(current,self.props,'factory_reset',factory=self.reference,restore_voice=False)
+        for at,old,new in voicelock.WINDOWS+voicelock.MENU_WINDOWS:
+            self.assertEqual(target['appFw.so'][at:at+len(new)],new)
+        self.assertEqual(wanted[0][voicelock.SETTING],b'\1')
+        restored,_,_=direct.plan(target,self.props,'factory_reset',factory=self.reference,restore_voice=True)
+        self.assertFalse(voicelock.active(restored['appFw.so']))
+    def test_voice_menu_flags_preserve_native_checks_neighbors_and_exact_inverse(self):
+        from looktool import voicelock,resourceworker
+        from test_voice_lock import MENU_CODE
+        from io import BytesIO
+        from elftools.elf.elffile import ELFFile
+        ap=self.stock['appFw.so'];target=voicelock.patch(ap)
+        segments=list(ELFFile(BytesIO(ap)).iter_segments())
+        guards=dict(resourceworker.guards('voice'))
+        for at,old,new in voicelock.MENU_WINDOWS:
+            segment=next(s for s in segments if s['p_type']=='PT_LOAD'
+                and s['p_offset']<=at and at+len(new)<=s['p_offset']+s['p_filesz'])
+            self.assertEqual(guards[segment['p_vaddr']+at-segment['p_offset']],new)
+        for at,code in MENU_CODE.items():
+            self.assertEqual(ap[at:at+len(bytes.fromhex(code))],bytes.fromhex(code))
+        for attribute,at in voicelock.MENU_DESCRIPTORS:
+            self.assertEqual(int.from_bytes(ap[at:at+4],'little'),attribute)
+            self.assertEqual(target[at:at+0x2c],ap[at:at+0x2c])
+            self.assertEqual(target[at+0x2c:at+0x46],b'\2\0'*13)
+            self.assertEqual(target[at+0x46:at+0xb8],ap[at+0x46:at+0xb8])
+        self.assertEqual(voicelock.patch(target,False),ap)
+        legacy=bytearray(ap)
+        for at,old,new in voicelock.WINDOWS:legacy[at:at+len(old)]=new
+        self.assertEqual(voicelock.patch(bytes(legacy),False),ap)
+
+    def test_sound_reset_removes_custom_loader_and_mutes_capture_without_touching_settings(self):
+        import boot_sound,candidate
+        for custom in (False,True):
+            with self.subTest(custom=custom):
+                ap=self.stock['appFw.so']
+                current=dict(self.current,**candidate.patch(ap,self.stock['cpapp-b.bin']))
+                if custom:current['appFw.so']=boot_sound.patch(ap,boot_sound.expected_windows())
+                before=copy.deepcopy(self.props)
+                target,wanted,names=direct.plan(current,self.props,'sound_reset')
+                self.assertEqual(target['appFw.so'],ap)
+                self.assertEqual(candidate.sound_state(target['cpapp-b.bin']),'mechanical_only')
+                self.assertEqual(wanted,[{},{}])
+                self.assertEqual(self.props,before)
+                self.assertIsNone(names)
+                cp=bytearray(target['cpapp-b.bin'])
+                for at,old,new in candidate.WINDOWS:cp[at:at+len(old)]=old
+                self.assertEqual(bytes(cp),self.stock['cpapp-b.bin'])
+
+    def test_factory_plan_reverses_all_voice_lock_windows_after_resources_are_accounted(self):
+        from looktool import voicelock
+        self.current['appFw.so']=voicelock.patch(self.current['appFw.so'])
+        target,wanted=self.apply('factory_reset',factory=self.reference)
+        self.assertEqual(target['appFw.so'],self.stock['appFw.so'])
+        self.assertFalse(voicelock.active(target['appFw.so']))
+        self.assertEqual(wanted[0][voicelock.SETTING],b'\1')
+        self.assertEqual(wanted[0][voicelock.TRIGGER],b'\0')
     @classmethod
     def setUpClass(cls):
         cls.stock = official.load(os.environ['A7C2_ORIGINAL_REFERENCE'])
@@ -27,6 +86,7 @@ class ReferencePlanningTests(unittest.TestCase):
         cls.ap = Path(index['six_ap']).read_bytes()
         cls.cp = Path(index['v4_cp']).read_bytes()
         cls.records = cls.core.backup_records(cls.stock['CX89700_ALLLANG.bin'])
+        cls.reference=official.regions(cls.stock)
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -67,7 +127,7 @@ class ReferencePlanningTests(unittest.TestCase):
         self.assertEqual(target,self.current) # No speculative program hook.
         self.assertEqual(wanted,[{verticalpersist.SETTING:b'\0'},{}])
         self.props[0][verticalpersist.SETTING]=self.props[0][verticalpersist.SETTING]._replace(data=b'\0')
-        _,off,_=direct.plan(target,self.props,'factory_reset',factory=official.builtin())
+        _,off,_=direct.plan(target,self.props,'factory_reset',factory=self.reference)
         self.assertEqual(off[0][verticalpersist.SETTING],b'\1')
         self.assertEqual(self.props[1],before[1])
 
@@ -85,22 +145,77 @@ class ReferencePlanningTests(unittest.TestCase):
             self.assertEqual(b, bytes(expected))
         self.assertEqual(self.props[1][0x02a40001].data[0x100:0x108], b'BODYDATA')
         self.assertEqual(self.props[1][0x02a4000d].data[0x80:0x88], b'BODYDATA')
+        self.assertEqual(wanted[0][0x02cf02c9],b'\0')
+        self.assertEqual(wanted[0][0x02cf02d9],b'\0')
+        self.assertEqual(wanted[0][0x02cf02d1],b'\1')
+        self.assertNotIn(0x02cf048b,wanted[0])
         for key, prop in before[0].items():
             if key not in wanted[0]:
                 self.assertEqual(self.props[0][key], prop)
 
     def test_builtin_original_regions_remove_all_known_legacy_program_changes(self):
         self.apply('fl23_enable')
-        restored, wanted = self.apply('factory_reset', factory=official.builtin())
+        restored, wanted = self.apply('factory_reset', factory=self.reference)
         self.assertEqual(restored['appFw.so'], self.stock['appFw.so'])
         self.assertEqual(restored['cpapp-b.bin'], self.stock['cpapp-b.bin'])
+
+    def test_builtin_reference_reverses_both_evf_pending_trials(self):
+        from looktool import uploadpending, uploadgate
+        for _, at, before, _ in uploadpending.WINDOWS:
+            if any(offset == at for offset, _ in uploadpending.factory_windows()):
+                raw = bytes.fromhex(before)
+                self.assertEqual(self.stock['cpapp-b.bin'][at:at + len(raw)], raw)
+        underlay = uploadgate.restore(self.cp)
+        previous = bytearray(underlay)
+        for _, at, _, after in uploadpending.TRIAL2_WINDOWS:
+            raw = bytes.fromhex(after)
+            previous[at:at + len(raw)] = raw
+        for trial in (bytes(previous), uploadpending.install(self.cp)):
+            self.current['appFw.so'] = self.ap
+            self.current['cpapp-b.bin'] = trial
+            restored, _ = self.apply('factory_reset', factory=self.reference)
+            self.assertEqual(restored['appFw.so'], self.stock['appFw.so'])
+            self.assertEqual(restored['cpapp-b.bin'], self.stock['cpapp-b.bin'])
+
+    def test_normal_desktop_import_uses_and_preserves_the_tested_evf_layout(self):
+        from looktool import uploadpending
+        look = self.make_look(1, 24)
+        self.apply('look_import', slot=1, look=look)
+        installed = dict(self.current)
+        self.assertTrue(uploadpending.active(installed['cpapp-b.bin']))
+        for _, at, _, after in uploadpending.WINDOWS:
+            raw = bytes.fromhex(after)
+            self.assertEqual(installed['cpapp-b.bin'][at:at + len(raw)], raw)
+        self.apply('look_import', slot=1, look=look)
+        self.assertEqual(self.current, installed)
+        self.apply('look_import', slot=2, look=self.make_look(2, -24))
+        self.assertTrue(uploadpending.active(self.current['cpapp-b.bin']))
+        self.apply('slot_default', slot=2)
+        self.assertTrue(uploadpending.active(self.current['cpapp-b.bin']))
+
+    def test_fl23_and_lut_install_orders_keep_identical_programs_and_evf_fix(self):
+        from looktool import uploadpending
+        self.current = {'appFw.so': self.stock['appFw.so'], 'cpapp-b.bin': self.stock['cpapp-b.bin'],
+                        **{'resources/' + n: stock_names() for n in nameworker.filenames()}}
+        initial = dict(self.current)
+        records = copy.deepcopy(self.props)
+        look = self.make_look(1, 24)
+        self.apply('fl23_enable')
+        self.apply('look_import', slot=1, look=look)
+        fl23_first, expected_records = dict(self.current), copy.deepcopy(self.props)
+        self.current, self.props = dict(initial), copy.deepcopy(records)
+        self.apply('look_import', slot=1, look=look)
+        self.apply('fl23_enable')
+        self.assertEqual(self.current, fl23_first)
+        self.assertEqual(self.props, expected_records)
+        self.assertTrue(uploadpending.active(self.current['cpapp-b.bin']))
 
     def test_builtin_reference_preserves_unrelated_program_regions(self):
         for name in ('appFw.so', 'cpapp-b.bin'):
             changed = bytearray(self.current[name])
             changed[0x70000] ^= 1
             self.current[name] = bytes(changed)
-        restored, _ = self.apply('factory_reset', factory=official.builtin())
+        restored, _ = self.apply('factory_reset', factory=self.reference)
         for name in ('appFw.so', 'cpapp-b.bin'):
             self.assertEqual(restored[name][0x70000], self.stock[name][0x70000] ^ 1)
 
@@ -111,7 +226,7 @@ class ReferencePlanningTests(unittest.TestCase):
         import boot_sound
         modified = boot_sound.patch(self.stock['appFw.so'], boot_sound.windows(self.stock['appFw.so']))
         self.current['appFw.so'] = modified
-        restored, _ = self.apply('factory_reset', factory=official.builtin())
+        restored, _ = self.apply('factory_reset', factory=self.reference)
         self.assertEqual(restored['appFw.so'], self.stock['appFw.so'])
 
     def make_look(self, slot, amount):
@@ -205,7 +320,7 @@ class ReferencePlanningTests(unittest.TestCase):
 
     def test_builtin_reset_removes_native_photo_code_and_all_tables(self):
         self.apply('look_import', slot=5, look=self.make_look(5, 32))
-        restored, _ = self.apply('factory_reset', factory=official.builtin())
+        restored, _ = self.apply('factory_reset', factory=self.reference)
         self.assertEqual(restored['appFw.so'], self.stock['appFw.so'])
         self.assertEqual(restored['cpapp-b.bin'], self.stock['cpapp-b.bin'])
 
@@ -247,7 +362,7 @@ class ReferencePlanningTests(unittest.TestCase):
         self.assertEqual(imported['mask'], 2)
         self.apply('slot_default', slot=2)
         self.assertEqual(device_layout.structural(self.current['appFw.so'], self.current['cpapp-b.bin'])['mask'], 0)
-        restored, _ = self.apply('factory_reset', factory=official.builtin())
+        restored, _ = self.apply('factory_reset', factory=self.reference)
         self.assertEqual(restored['appFw.so'], self.stock['appFw.so'])
         self.assertEqual(restored['cpapp-b.bin'], self.stock['cpapp-b.bin'])
 
@@ -294,7 +409,7 @@ class ReferencePlanningTests(unittest.TestCase):
         with patch('looktool.firmware.sha', side_effect=AssertionError('No firmware SHA in direct operations')):
             self.apply('slot_default', slot=4)
             self.apply('fl23_disable')
-            self.apply('factory_reset', factory=official.builtin())
+            self.apply('factory_reset', factory=self.reference)
 
     def test_mixed_restore_and_write_preserves_unselected_slots_and_native_features(self):
         from desktopapp import presets,lookbatch

@@ -1,0 +1,92 @@
+"""Include SSH files; a small Wi-Fi event receiver controls the listener."""
+import base64
+from pathlib import Path
+import subprocess
+
+from .paths import ROOT,write_json
+from .actions.ssh import engine
+
+
+BOOT = '''#!/bin/busybox sh
+# Started by a Wi-Fi address event; stops with that network session.
+set -eu
+source=/usr/lib/a7c2-tools/ssh
+session=/tmp_wbshd/a7c2-ssh-boot
+test -d /tmp_wbshd || exit 0
+test -x "$source/dropbear" && test -s "$source/hostkey" && test -s "$source/password.hash" || exit 0
+test -n "${1:-}" || exit 0
+umask 077
+/bin/busybox mkdir -p "$session"
+/bin/busybox cp "$source/dropbear" "$source/hostkey" "$source/password.hash" "$session/"
+/bin/busybox test ! -s "$source/authorized_keys" || /bin/busybox cp "$source/authorized_keys" "$session/"
+/bin/busybox chmod 700 "$session" "$session/dropbear"
+/bin/busybox chmod 600 "$session/hostkey" "$session/password.hash"
+cd "$session"
+exec ./dropbear -F -p "$1:2222" -r "$session/hostkey" -D . -P "$session/dropbear.pid" -K 0 -I 0
+'''
+
+
+def build_wifi_receiver(output,zig=None):
+    from looktool.nativebuild import zig_command,zig_environment,zig_output_path
+    output=Path(output);output.parent.mkdir(parents=True,exist_ok=True)
+    env=zig_environment()
+    with zig_output_path(output,env) as local:
+        command=zig_command(zig)+['cc','-target','aarch64-linux-musl','-Os','-s','-static',
+            str(ROOT/'src/camera_api/wifi_ssh.c'),'-o',str(local)]
+        done=subprocess.run(command,env=env,capture_output=True,text=True,timeout=180)
+        if done.returncode:raise ValueError('Wi-Fi SSH receiver build failed: '+done.stderr[-2500:])
+    return output
+
+
+def patch_startup(original):
+    """Dispatch vendor boot first; run SSH separately without waiting for it."""
+    marker=b'    /usr/bin/bootin.elf &\n'
+    if original is None or original.count(marker)!=1 or b'wifi-ssh' in original:
+        raise ValueError('Original C2 startup seam differs')
+    from .startup import patch_log_hook
+    original=patch_log_hook(original)
+    addition=b'    /usr/lib/a7c2-tools/ssh/wifi-ssh </dev/null >/dev/null 2>&1 &\n'
+    return original.replace(marker,marker+addition,1)
+
+
+def prepare_boot(args,output,rootfs,current=None):
+    from Cryptodome.PublicKey import ECC
+    from .firmwarelocal import tools
+    module=engine();public=module.public_key(Path(args['client_key']).read_bytes()) if args.get('client_key') else b''
+    assets=Path(args.get('artifacts') or ROOT/'desktop-assets/ssh')
+    module.executable(assets/'dropbear')
+    output=Path(output);output.mkdir(parents=True,exist_ok=False)
+    key=ECC.generate(curve='Ed25519');raw_public=key.public_key().export_key(format='raw')
+    hostkey=b'\0\0\0\x0bssh-ed25519\0\0\0\x40'+key.seed+raw_public
+    rows={}
+    for name,raw,mode in (('dropbear',(assets/'dropbear').read_bytes(),0o755),('hostkey',hostkey,0o600),
+                          ('authorized_keys',public,0o600),('password.hash',(assets/'password.hash').read_bytes(),0o600),
+                          ('boot.sh',BOOT.encode('ascii'),0o755)):
+        path=output/name;path.write_bytes(raw)
+        rows['/lib/a7c2-tools/ssh/'+name]=dict(source=str(path),mode=mode)
+    receiver=build_wifi_receiver(output/'wifi-ssh',args.get('zig'))
+    rows['/lib/a7c2-tools/ssh/wifi-ssh']=dict(source=str(receiver),mode=0o755)
+    if current is not None:
+        rows.update(prepare_api(current,output/'api',args.get('zig')))
+    _,_,ext2,_=tools();original=None
+    with Path(rootfs).open('rb') as image:
+        for entry in ext2.readExt2(image):
+            if entry.path=='/sbin/init2':original=entry.contents.read();break
+    script=output/'init2';script.write_bytes(patch_startup(original))
+    host_blob=b'\0\0\0\x0bssh-ed25519\0\0\0\x20'+raw_public
+    write_json(output/'host-public.json',dict(algorithm='ssh-ed25519',public_key=base64.b64encode(host_blob).decode(),
+        port=2222,authentication='password',persistent_startup=False,wifi_trigger=True,
+        startup_dispatch='background_after_vendor_boot',startup_wait=False,physical_boot_verified=False))
+    (output/'dropbear-LICENSE.txt').write_bytes((assets/'dropbear-LICENSE.txt').read_bytes())
+    return dict(usr=rows,rootfs={'/sbin/init2':dict(source=str(script),mode=0o755)})
+
+
+def prepare_api(current,output,zig=None):
+    """Install the local command independently of SSH listener/key setup."""
+    from .cameraapi import build
+    output=Path(output);output.mkdir(parents=True,exist_ok=True)
+    binary=build(current,output,zig)
+    entry=output/'a7c2-api.sh'
+    entry.write_text('#!/bin/busybox sh\nexec /usr/lib/a7c2-tools/ssh/a7c2-api "$@"\n',encoding='ascii',newline='\n')
+    return {'/lib/a7c2-tools/ssh/a7c2-api':dict(source=str(binary),mode=0o755),
+            '/bin/a7c2-api':dict(source=str(entry),mode=0o755)}

@@ -1,0 +1,31 @@
+{
+  "schema": "c2-native-first-training-profile/1",
+  "name": "C2 mean-DE00 native-first monotone-S-Gamma",
+  "settings": {
+    "rounds": 3,
+    "native_evaluations": 120,
+    "grid_evaluations": 180,
+    "grid_rounds": 5,
+    "integer_node_budget": 16,
+    "native_integer_sweeps": 3,
+    "grid_output_weight": 0.01,
+    "grid_node_weight": 0.001,
+    "gamma_frozen": false,
+    "objective": "mean-CIEDE2000"
+  },
+  "options": {
+    "group_weights": {
+      "random": 8.0,
+      "primaries": 0.25,
+      "gray": 0.5,
+      "colorchecker24": 0.25,
+      "sector16": 0.25
+    },
+    "search_options": {
+      "primary_tonal_weight": 1.0,
+      "hue24_tonal_weight": 1.0
+    }
+  },
+  "selection": "validation mean DeltaE00 plus weak grid penalty; previous included; test never selects",
+  "gamma": "128 original nonuniform nodes; monotone, unrestricted curvature; existing C2 expanded legality"
+}

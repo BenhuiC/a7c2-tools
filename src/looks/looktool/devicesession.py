@@ -1,16 +1,17 @@
 """Lazy optional USB access for explicit LUT device commands only."""
-import importlib,struct,sys,time
+import importlib,sys,time
 from pathlib import Path
 from . import firmware
 from .nativebuild import ROOT
 
-TEMP_NAMES={'libJit.so','lut-program-staged.so','lut-names-staged.so','lut-runtime-staged.so',
+TEMP_NAMES={'libJit.so','lut-program-staged.so','lut-names-staged.so','lut-runtime-staged.so','resource.chunk',
+    'a7c2.trust.staged.so','a7c2.trust.result','a7c2.trust.chunk',
     'portrait.staged.so','portrait.request','portrait.result',
     'a7c2.install.request','a7c2.install.result','a7c2.names.request','a7c2.names.result',
     'a7c2.wbi.request','a7c2.wbi.result','a7c2.runtime.result','a7c2.probe.result'}
 
 def modules():
-    folder=ROOT/('src/camera_runtime' if (ROOT/'src/camera_runtime').is_dir() else 'src/fl23');sys.path[:0]=[str(folder),str(folder/'vendor')]
+    folder=ROOT/('src/camera_runtime' if (ROOT/'src/camera_runtime').is_dir() else 'src/fl23');sys.path[:0]=[str(folder),str(ROOT/'src/fl23/vendor')]
     transport=importlib.import_module('transport');core=importlib.import_module('core')
     if Path(transport.__file__).resolve()!=folder/'transport.py' or Path(core.__file__).resolve()!=folder/'core.py':
         raise ValueError('Unexpected camera transport module already loaded')
@@ -101,8 +102,8 @@ class Camera:
     def read(self,path,missing=False):
         try:return self.link.read('/tmp/jiritsu/../../'+path.lstrip('/'),missing)
         except BaseException:
-            # Name the file; a channel error is otherwise reported generically.
-            print('读取相机文件时 USB 通信出错：'+path,flush=True)
+            # A camera-side file error is not necessarily a USB failure.
+            print('读取相机文件失败：'+path,flush=True)
             raise
     def temp_read(self,name,missing=False):
         if name not in TEMP_NAMES:raise ValueError('Unowned temporary name')
@@ -111,10 +112,10 @@ class Camera:
         if self.service_only:raise ValueError('Service-only recovery is read-only; reconnect normal USB identity before new execution')
         if not self.programs_pinned:raise ValueError('Verify complete source programs before native execution')
         if self.identity_pending:
-            manifest=self.core.assets()
-            if name not in ['lut-runtime-staged.so','libJit.so'] or firmware.sha(data)!=manifest['files']['runtime.so']:
+            expected=(self.core.BASE/'assets/runtime.so').read_bytes()
+            if name not in ['lut-runtime-staged.so','libJit.so'] or data!=expected:
                 raise ValueError('Only the pinned read-only model/runtime probe is allowed before model confirmation')
-        if name not in TEMP_NAMES or not data or len(data)>65536:raise ValueError('Invalid job temporary data')
+        if name not in TEMP_NAMES or not data or len(data)>(1048576 if name=='resource.chunk' else 65536):raise ValueError('Invalid job temporary data')
         self.link.select('/tmp/jiritsu/'+name);self.link.jiritsu(16,b'\0\xff\0'+data)
     def temp_remove(self,name):
         if name not in TEMP_NAMES:raise ValueError('Unowned temporary name')
@@ -163,35 +164,43 @@ def invoke(camera,blob,*,stage,request,result,contents,mode,decode,record,save_r
         if camera.temp_read(name,True) is not None:raise ValueError('Existing temporary state needs recovery: '+name)
     if camera.read('/etc/ld.so.preload',True):raise ValueError('Existing preload configuration requires inspection')
     expected={stage:blob,'libJit.so':blob}
-    record('native_stage_intent',stage=stage,result=result,mode=mode,worker_sha256=firmware.sha(blob),request=request,contents_hex=contents.hex() if contents else None)
+    worker_sha=firmware.sha(blob)
+    record('native_stage_intent',stage=stage,result=result,mode=mode,worker_sha256=worker_sha,request=request,contents_hex=contents.hex() if contents else None)
     camera.temp_write(stage,blob)
     if camera.temp_read(stage)!=blob:raise ValueError('Worker staging readback differs')
     if request is not None:
         expected[request]=contents;camera.temp_write(request,contents)
         if camera.temp_read(request)!=contents:raise ValueError('Request staging readback differs')
-    record('native_intent',stage=stage,result=result,mode=mode,worker_sha256=firmware.sha(blob))
+    record('native_intent',stage=stage,result=result,mode=mode,worker_sha256=worker_sha)
     try:
         camera.temp_write('libJit.so',blob)
         raw=camera.temp_read(result);save_raw(raw)
         parsed=decode(raw)
+        expected[result]=raw
+        for extra in extras:
+            value=camera.temp_read(extra)
+            extra_info=None
+            if extra=='a7c2.probe.result':
+                extra_info=camera.core.parse_native('probe',value)
+                if isinstance(parsed,dict) and isinstance(extra_info,dict):
+                    parsed['usr_mount_readonly']=extra_info.get('usr_mount_readonly')
+            expected[extra]=value
+            record('native_extra_result',name=extra,sha256=firmware.sha(value),details=extra_info)
+        record('native_result_verified',stage=stage,mode=mode,result=parsed)
+        # Account for the whole namespace before deleting the first report.
+        for name in names:
+            actual=camera.temp_read(name,True)
+            if actual is not None and actual!=expected[name]:
+                raise ValueError('Preserve unexpected temporary contents: '+name)
+        # Retain reports until the worker and request have been removed.
+        cleanup=[name for name in names if name not in (result,*extras)]+[result,*extras]
+        for name in cleanup:
+            actual=camera.temp_read(name,True)
+            if actual is not None:
+                if actual!=expected[name]:raise ValueError('Preserve unexpected temporary contents: '+name)
+                camera.temp_remove(name)
+            if camera.temp_read(name,True) is not None:raise ValueError('Temporary cleanup incomplete: '+name)
+        record('native_cleanup_verified',stage=stage,mode=mode)
     except BaseException:
         camera.mark_unknown();raise
-    expected[result]=raw
-    for extra in extras:
-        value=camera.temp_read(extra)
-        extra_info=None
-        if extra=='a7c2.probe.result':
-            extra_info=camera.core.parse_native('probe',value)
-            if isinstance(parsed,dict) and isinstance(extra_info,dict):
-                parsed['usr_mount_readonly']=extra_info.get('usr_mount_readonly')
-        expected[extra]=value
-        record('native_extra_result',name=extra,sha256=firmware.sha(value),details=extra_info)
-    record('native_result_verified',stage=stage,mode=mode,result=parsed)
-    for name in reversed(names):
-        actual=camera.temp_read(name,True)
-        if actual is not None:
-            if actual!=expected[name]:raise ValueError('Preserve unexpected temporary contents: '+name)
-            camera.temp_remove(name)
-        if camera.temp_read(name,True) is not None:raise ValueError('Temporary cleanup incomplete: '+name)
-    record('native_cleanup_verified',stage=stage,mode=mode)
     return parsed

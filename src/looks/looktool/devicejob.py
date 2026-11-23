@@ -3,9 +3,9 @@
 No device is opened at import time. Unknown native outcomes are never replayed.
 """
 from datetime import datetime,timezone
-import gzip,json,os,shutil,struct,uuid
+import gzip,json,os,struct,uuid
 from pathlib import Path
-from . import backupstore,calibration,device_layout,devicesettings,firmware,nameworker,native,nativebuild,project,resources,six,worker
+from . import backupstore,calibration,device_layout,devicesettings,firmware,nameworker,native,nativebuild,project,resources,six,uploadgate,worker
 from .devicesession import Camera,invoke
 from .devicelock import serialized
 
@@ -126,6 +126,7 @@ class Job:
         actual={}
         self._later_fl23=False
         self._later_slot_updates=False
+        self._later_upload_gate=False
         camera.byte_checks=not self._hashes()
         if not self._hashes():
             wanted={n:self.source(n) for n in PROGRAM_PATHS}
@@ -143,7 +144,26 @@ class Job:
                 modules();import compat
                 _,_,with_fl23,_,_=compat.plan(target['appFw.so'],target['cpapp-b.bin'],transitions=False)
                 self._later_fl23=actual==with_fl23
-                differs=not self._later_fl23
+                if allow_later_slots and not self._later_fl23:
+                    # Old hash-based jobs remain strict about other slot data.
+                    # Accept only the complete target with an exact reviewed
+                    # forward migration, never rewrite its recorded hashes.
+                    from . import uploadpending
+                    upgrades=[uploadgate.restore]
+                    if uploadpending.active(actual['cpapp-b.bin']):
+                        upgrades.append(uploadpending.install)
+                    for candidate,later_fl23 in ((target,False),(with_fl23,True)):
+                        for upgrade in upgrades:
+                            try:
+                                upgraded=dict(candidate)
+                                upgraded['cpapp-b.bin']=upgrade(candidate['cpapp-b.bin'])
+                            except ValueError:
+                                continue
+                            if upgraded!=candidate and actual==upgraded:
+                                self._later_upload_gate=True;self._later_fl23=later_fl23
+                                break
+                        if self._later_upload_gate:break
+                differs=not (self._later_fl23 or self._later_upload_gate)
             if differs:raise ValueError('Complete host readback differs from the job and its FL23-compatible target')
         elif actual!=wanted:
             if expected==self.state['target_hashes']:
@@ -157,7 +177,8 @@ class Job:
                         self._later_fl23=True;self._later_slot_updates=True
             if not self._later_fl23 and not self._later_slot_updates:raise ValueError('Complete host readback differs from planned bytes')
         self.record('complete_host_program_readback_verified',hashes={n:firmware.sha(b) for n,b in actual.items()} if self._hashes() else None,
-            comparison='file-digest' if self._hashes() else 'complete-bytes-with-later-unselected-slot-data' if self._later_slot_updates else 'complete-bytes',full_readback_files_saved=False)
+            comparison='complete-bytes-with-native-upload-entry' if self._later_upload_gate else
+                'file-digest' if self._hashes() else 'complete-bytes-with-later-unselected-slot-data' if self._later_slot_updates else 'complete-bytes',full_readback_files_saved=False)
         if hasattr(camera,'pin_programs'):camera.pin_programs(actual['appFw.so'],actual['cpapp-b.bin'])
         return actual
     def _resource_readback(self,camera,after,*,allow_later_slots=False):
@@ -480,18 +501,18 @@ class Job:
         except BaseException as exc:self.save('NEEDS_REVIEW',failed_during=self.state['phase'],error=str(exc));raise
         return self.state
     @serialized
-    def verify(self,accept_photos=False):
+    def verify(self):
         self.load()
         if self.state['phase'] not in ['AWAITING_RELOAD','RELOAD_VERIFIED','COMPLETE','RESTORED_AWAITING_RELOAD','RESTORED']:raise ValueError('A completed install/reload preparation is required')
         restore=self.state['phase'] in ['RESTORED_AWAITING_RELOAD','RESTORED']
         prior=self.state['phase']
         self._verify_runtime_ok=False
-        try:return self._verify(restore,accept_photos)
+        try:return self._verify(restore)
         except BaseException as exc:
             if self._verify_runtime_ok:self.record('read_only_verification_rejected',error=str(exc))
             else:self.save('NEEDS_REVIEW',failed_during=prior,error=str(exc))
             raise
-    def _verify(self,restore,accept_photos):
+    def _verify(self,restore):
         with self.factory(self.state['identity']) as camera:
             programs=self._read_programs(camera,self.state['source_hashes'] if restore else self.state['target_hashes'],allow_later_slots=not restore)
             runtime=self._invoke(camera,'runtime',0);boot=runtime['boot_id'].encode('ascii')
@@ -515,8 +536,7 @@ class Job:
                     old=tuple(before[1][k].data for k in keys);new=tuple(actual[1][k].data for k in keys)
                     if old!=new and camera.core.merge_colors(*old)!=new:raise ValueError('CP changes exceed the native FL23 color addition')
             self.record('postreload_storage_and_settings_verified',boot_id_sha256=firmware.sha(boot),CP_running_memory_directly_read=False)
-            if accept_photos and not restore and self.state['phase']!='COMPLETE':
-                self.record('physical_acceptance_reported_by_user')
+            if not restore and self.state['phase']!='COMPLETE':
                 self._verify_runtime_ok=False
                 if self._later_name_updates:
                     self.state['name_cleanup_build']=nameworker.prepare_cleanup(self.state['name_build'],
@@ -533,14 +553,13 @@ class Job:
                     self.artifacts();self.record('name_cleanup_retargeted_after_native_fl23')
                 self._invoke(camera,'names',3);self._resource_readback(camera,True,allow_later_slots=True)
                 self._verify_runtime_ok=True
-        self.save(('RESTORED' if restore else 'COMPLETE') if accept_photos else ('RESTORED_AWAITING_RELOAD' if restore else 'RELOAD_VERIFIED'),user_photos_and_preview_confirmed=bool(accept_photos))
-        if accept_photos:
-            from .rawidentity import after_verified
-            from . import photoio
-            document={'name':self.state['name'],'raw_profile':self.state.get('raw_profile_before' if restore else 'raw_profile_binding')}
-            if document['raw_profile'] is not None:document['camera_signature']=photoio.signature(programs['cpapp-b.bin'],self.state['slot'])
-            after_verified(self.state,self.save,self.state['job_id']+('-restore' if restore else ''),
-                [document],[self.state['slot']])
+        self.save('RESTORED' if restore else 'COMPLETE')
+        from .rawidentity import after_verified
+        from . import photoio
+        document={'name':self.state['name'],'raw_profile':self.state.get('raw_profile_before' if restore else 'raw_profile_binding')}
+        if document['raw_profile'] is not None:document['camera_signature']=photoio.signature(programs['cpapp-b.bin'],self.state['slot'])
+        after_verified(self.state,self.save,self.state['job_id']+('-restore' if restore else ''),
+            [document],[self.state['slot']])
         return self.state
     @serialized
     def restore(self,battery):
@@ -650,8 +669,7 @@ class Job:
         elif mode==1 and kind=='wbi':
             self.save('RESTORED_AWAITING_RELOAD' if self.state.get('active_operation')=='restore' else 'AWAITING_RELOAD')
         elif mode==3 and kind=='names':
-            accepted=any(e['event']=='physical_acceptance_reported_by_user' for e in self.state['journal'])
-            self.save('COMPLETE' if accepted else 'RELOAD_VERIFIED',user_photos_and_preview_confirmed=accepted)
+            self.save('COMPLETE')
         elif kind=='runtime':
             prior=self.state.get('failed_during')
             if prior in ['AWAITING_RELOAD','RELOAD_VERIFIED','COMPLETE','RESTORED_AWAITING_RELOAD','RESTORED']:self.save(prior)

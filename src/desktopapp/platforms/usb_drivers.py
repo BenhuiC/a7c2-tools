@@ -10,7 +10,6 @@ import os
 from pathlib import Path
 import platform
 import re
-import shutil
 import subprocess
 import sys
 import time
@@ -21,6 +20,14 @@ from .macos_media import unmount_camera_volume
 
 PIDS = {'0e8a': 'Sony A7C II - Mass Storage', '0336': 'Sony A7C II - Service'}
 WDI_URL = 'https://github.com/Timocop/libwdi-wdi-releases/releases/download/v1.0/x64.zip'
+
+
+class ServiceExitUnconfirmed(RuntimeError):
+    """Driver/session checks ended, but normal USB did not return."""
+
+
+def is_admin():
+    return bool(ctypes.windll.shell32.IsUserAnAdmin())
 
 
 def scan():
@@ -170,6 +177,8 @@ def elevated_result(folder, code):
         if value.get('phase') == 'SUCCEEDED' and code == 0:
             return value['result']
         if value.get('error'):
+            if value.get('error_type')=='ServiceExitUnconfirmed':
+                raise ServiceExitUnconfirmed(value['error'])
             raise RuntimeError(value['error'])
     raise RuntimeError('Administrator driver process did not complete: ' + str(code))
 
@@ -208,7 +217,7 @@ def install(arguments, job, *, report=None):
         result = {'driver_changed': False, 'pid': pid, 'note': '已安装可用驱动，本次沿用，未重复安装', 'report': before}
         write_json(job / ('driver-result-' + pid + '.private.json'), result)
         return result
-    if not ctypes.windll.shell32.IsUserAnAdmin():
+    if not is_admin():
         if arguments.get('elevated'):
             raise PermissionError('Windows administrator permission was not granted')
         return elevate_request(arguments, job)
@@ -232,37 +241,47 @@ def install(arguments, job, *, report=None):
     return result
 
 
-def prepare(job):
+def prepare(job,*,elevated=False):
     """Explicit two-stage setup; install only a currently present camera PID."""
     from looktool.devicesession import Camera, modules
     transport, _ = modules()
     results = []
     if sys.platform == 'win32':
+        # Request elevation before authentication changes the camera's PID.
+        if not is_admin():
+            if elevated:raise PermissionError('Windows administrator permission was not granted')
+            return elevate_request({},job,action='usb_prepare')
+        installer()  # Prepare the executable/download before the short PID window.
         results.append(install({'pid': '0e8a'}, job))
-
+        observed={}
+        def service_present():
+            from .windows_pnp import devices
+            rows=devices()
+            observed['report']=dict(platform='win32',camera_io=False,devices=rows,errors=[])
+            return any('PID_0336' in d['id'].upper() for d in rows)
         def service_driver():
-            print('正在等待服务身份 054C:0336；出现后先检测驱动，已有可用绑定则跳过安装。', flush=True)
-            deadline = time.monotonic() + 20
-            while True:
-                report = scan()
-                if any('PID_0336' in d['id'].upper() for d in report['devices']):
-                    break
-                if time.monotonic() >= deadline:
-                    write_json(job / 'service-driver-enumeration.private.json', report)
-                    raise RuntimeError('Sony service PID 0336 did not appear. Preserve this log and reconnect before another setup attempt.')
-                time.sleep(.5)
+            report=observed.get('report') or scan()
             print('服务身份已出现，检测现有驱动。', flush=True)
             results.append(install({'pid': '0336'}, job, report=report))
-
+            print('驱动准备已完成，重新等待 0336 接口连接。',flush=True)
         transport.SERVICE_DRIVER_SETUP = service_driver
+        transport.SERVICE_DRIVER_PRESENT = service_present
     try:
         print('正在建立相机服务连接（此步骤不写固件）；两种 USB 身份分别检查。', flush=True)
         with Camera() as camera:
-            print('服务连接成功，驱动准备结束。', flush=True)
-            return {'model': camera.identity['model'], 'service_connected': True,
-                    'camera_firmware_written': False, 'driver_results': results}
+            model=camera.identity['model']
+            print('服务连接已通过，正在退出并等待普通 USB 身份。', flush=True)
+        if sys.platform=='win32' and not transport.wait_normal_return():
+            write_json(job/'driver-prepare.private.json',dict(service_connected=True,normal_returned=False,driver_results=results))
+            raise ServiceExitUnconfirmed('驱动与服务连接已检查，但尚未确认相机退出 0336、回到 0E8A。'
+                '本次未写入相机固件。请等任务停止后拔 USB、关机并等灯灭、取下电池至少 1 分钟，'
+                '再装回开机、选择海量存储并接回。若仍只出现 0336，请保留日志，不要反复认证或恢复固件。')
+        print('服务连接成功，驱动准备结束；请按完成提示将相机断电重开。', flush=True)
+        return {'model': model, 'service_connected': True, 'normal_returned':True,
+                'camera_firmware_written': False, 'driver_results': results}
     finally:
         transport.SERVICE_DRIVER_SETUP = None
+        transport.SERVICE_DRIVER_PRESENT = None
 
 
 def driver_inventory():
@@ -291,7 +310,7 @@ def is_camera_id(value, pids):
     return bool(match and match[1].lower() in pids)
 
 
-def inf_hardware_ids(text):
+def inf_hardware_ids(text,*,exact_only=False):
     r"""Resolve libusbK/libwdi INF [Strings] references before reading USB IDs.
 
     Zadig libusbK uses USB\%DeviceID%; WinUSB commonly uses a literal ID.
@@ -322,14 +341,32 @@ def inf_hardware_ids(text):
         return re.sub(r'%([^%]+)%', replace, value)
 
     expanded = expand('\n'.join(content))
+    if exact_only:
+        tokens=re.findall(r'USB\\[^,\s\"]+',expanded,re.I)
+        if any(not re.fullmatch(r'USB\\VID_[0-9a-f]{4}&PID_[0-9a-f]{4}(?:&(?:MI_[0-9a-f]{2}|REV_[0-9a-f]{4}))*',token,re.I) for token in tokens):
+            return []
     return re.findall(r'USB\\VID_([0-9a-f]{4})&PID_([0-9a-f]{4})(?=[\\&,\s\"]|$)', expanded, re.I)
 
 
 def uninstall_plan(rows, pids, inf_folder):
     """Never remove a native INF or a package used by another type of device."""
     selected = [row for row in rows if is_camera_id(row.get('id'), pids)]
-    names = sorted({str(row.get('inf') or '').lower() for row in selected
-                    if re.fullmatch(r'oem\d+\.inf', str(row.get('inf') or ''), re.I)})
+    bound={str(row.get('inf') or '').lower() for row in selected
+           if re.fullmatch(r'oem\d+\.inf', str(row.get('inf') or ''), re.I)}
+    # Include inactive exact-camera packages: Windows can immediately bind an
+    # older OEM INF after the currently bound package is removed.
+    names=set(bound)
+    for path in Path(inf_folder).glob('oem*.inf'):
+        if not re.fullmatch(r'oem\d+\.inf',path.name,re.I):continue
+        try:raw=path.read_bytes()
+        except OSError:
+            if path.name.lower() in bound:raise
+            continue
+        text=raw.decode('utf-16' if raw.startswith((b'\xff\xfe',b'\xfe\xff')) else 'utf-8',errors='replace')
+        ids=inf_hardware_ids(text,exact_only=True)
+        if ids and all(vid.lower()=='054c' and pid.lower() in pids for vid,pid in ids):
+            names.add(path.name.lower())
+    names=sorted(names)
     for name in names:
         users = [row for row in rows if str(row.get('inf') or '').lower() == name]
         if any(not is_camera_id(row.get('id'), pids) for row in users):
@@ -420,6 +457,7 @@ def uninstall(arguments, job):
                'removed': removed, 'reboot_required': reboot})
     return {'removed_packages': removed, 'reboot_required': reboot,
             'camera_firmware_written': False, 'driver_backup': str(job / 'exported-drivers'),
-            'next_step': ('Windows requests a system restart to finish removal; no restart was initiated.' if reboot else
-                         'Unplug/reconnect USB in Mass Storage mode so Windows can bind its default storage driver.')
-                         if removed else 'No third-party camera driver package found; Windows native bindings were retained.'}
+            'next_step': ('Windows 要求重启电脑以完成卸载；软件不会自动重启。' if reboot else
+                         '电脑侧驱动已卸载。待任务结束后将相机断电重开，再以海量存储模式重新连接。'
+                         '若描述符仍为 0336，不能保证仅卸载电脑驱动就能恢复为 0E8A。')
+                         if removed else '没有找到仅用于所选相机身份的第三方驱动包，Windows 原生驱动已保留。'}

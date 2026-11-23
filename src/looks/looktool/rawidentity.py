@@ -100,6 +100,9 @@ def document_signature(document):
     if 'table_base64' not in document:return None
     raw=base64.b64decode(document['table_base64'],validate=True)
     native_raw=None
+    if document.get('edit_native') is not None:
+        from .editrecipe import pack
+        return dict(table_hex=raw.hex(),native_hex=pack(document['edit_native']).hex())
     if document.get('native_photo') is not None:
         from .photoformat import expand_matrix
         basis=document['native_photo']['runtime_basis']
@@ -157,7 +160,7 @@ def activated(documents,slots,event_id,since,settings_path=None):
 
 def after_verified(state,save,event_id,documents,slots):
     """A host-profile error never turns a verified firmware write into a retry."""
-    if state.get('phase') not in ('VERIFIED','COMPLETE','RESTORED'):
+    if state.get('phase') not in ('VERIFIED','LOADED','COMPLETE','RESTORED'):
         return dict(status='awaiting_verified_activation')
     since=state.get('raw_profile_effective_since') or datetime.now().isoformat(timespec='microseconds')
     try:result=activated(documents,slots,event_id,since)

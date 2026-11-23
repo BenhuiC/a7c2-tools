@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 from desktopapp import worker
 from desktopapp.paths import data_root
-from looktool import bundle, checkpointworker, direct, factoryrecover, lookfile
+from looktool import bundle, checkpointworker, direct, lookfile
 from test_checkpoint import Camera, KEYS, fake_compile, values
 from test_direct import SimDirect
 
@@ -32,19 +32,24 @@ class LifecycleTests(unittest.TestCase):
                 return target,[{KEYS[0]:bytes([marker])},{}],None
             def looks(current,records,*args):return plan(current,records,'look_import')
             def job(folder,*args,**kw):return SimDirect(folder,factory=camera)
+            reference=str(root/'provided-reference.json')
             def run(action,folder,**args):
-                return worker.run(action,dict(workspace=str(work/folder),firmware='2.01',power_confirmed=True,**args),root)
+                return worker.run(action,dict(workspace=str(work/folder),firmware='2.01',power_confirmed=True,
+                    factory=reference,restore_voice=False,**args),root)
             def boot_and_verify(folder,number):
                 camera.boot='cold-boot-'+str(number)
                 return run('direct_verify',folder,accepted=False)
             with patch.object(Camera,'__call__',lambda obj,expected=None:obj), \
                     patch.object(checkpointworker,'compile_worker',side_effect=fake_compile), \
                     patch.object(direct,'plan',side_effect=plan),patch.object(bundle,'plan',side_effect=looks), \
-                    patch.object(direct,'DirectJob',side_effect=job),patch('desktopapp.official.load',return_value={}):
-                # Already original: no write, restart or extra verification needed.
+                    patch.object(direct,'DirectJob',side_effect=job), \
+                    patch('desktopapp.official.prepare_restore',return_value=({},reference,None)) as prepare, \
+                    patch('desktopapp.official.load_restore',return_value={}):
+                # A cold reload clears possible RAM auditions even when disk
+                # bytes already match. Verification must not repeat writes.
                 first=run('direct_factory_reset','original')
-                self.assertEqual(first['phase'],'LOADED')
-                self.assertIsNone(factoryrecover.pending(work))
+                self.assertEqual(first['phase'],'AWAITING_RELOAD')
+                self.assertEqual(boot_and_verify('original',0)['phase'],'LOADED')
                 original_bytes=(work/'original/direct.private.json').read_bytes()
                 for cycle in (1,2):
                     install='install-'+str(cycle)
@@ -55,9 +60,9 @@ class LifecycleTests(unittest.TestCase):
                     self.assertEqual(result['workspace'],str(work/restore))
                     self.assertEqual(result['phase'],'AWAITING_RELOAD')
                     self.assertEqual(boot_and_verify(restore,cycle*2+1)['phase'],'LOADED')
-                    self.assertIsNone(factoryrecover.pending(work,work/'original'))
                     state=json.loads((work/restore/'direct.private.json').read_text())
                     self.assertFalse(state['physical_checks_accepted'])
                 self.assertEqual((work/'original/direct.private.json').read_bytes(),original_bytes)
                 self.assertEqual(camera.native_calls.count(('program',1)),4)
                 self.assertEqual(camera.ram,before)
+                self.assertEqual(prepare.call_count,3)

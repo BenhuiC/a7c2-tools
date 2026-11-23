@@ -64,6 +64,18 @@ def test_existing_windows_zip_extracts_data_only(tmp_path):
     assert not list(tmp_path.rglob('*.exe'))
 
 
+def test_legacy_pack_license_is_optional_but_preserved_when_present(tmp_path):
+    before=tmp_path/'before';folder=before/'desktop-assets/presets/default-six-v1'
+    folder.mkdir(parents=True)
+    for name in assets.PRESET_NAMES:(folder/name).write_bytes(name.encode())
+    library_fixture(before)
+    legacy=assets.OPTIONAL_PRESET_NAMES[0]
+    (folder/legacy).write_bytes(b'original legacy license')
+    archive=assets.export_presets(tmp_path/'presets.zip',before)
+    after=assets.import_presets(archive,tmp_path/'after')
+    assert (after/legacy).read_bytes()==b'original legacy license'
+
+
 def test_missing_pack_notice_does_not_replace_existing_assets(tmp_path):
     target=tmp_path/'desktop-assets/presets/default-six-v1';target.mkdir(parents=True)
     (target/'slot1.a7look').write_bytes(b'existing')
@@ -75,16 +87,42 @@ def test_missing_pack_notice_does_not_replace_existing_assets(tmp_path):
 
 
 def test_windows_output_path_unchanged(tmp_path):
-    fixture=tmp_path/'fixture';library_fixture(fixture)
+    import json
+    from looktool.looklabels import defaults
+    fixture=tmp_path/'fixture'
+    folder=fixture/'desktop-assets/profile-library-v1';folder.mkdir(parents=True)
+    rows=[]
+    for item in [*defaults(),dict(name='Kodak UltraMax 400',icon_text='K400')]:
+        stem=item['name'];row=dict(name=stem,dcp=stem+'.dcp',a7look=stem+'.a7look',
+            menu_a7look='MenuIcons/'+stem+'.a7look',menu_icon_text=item['icon_text'])
+        for key in ('dcp','a7look','menu_a7look'):
+            path=folder/row[key];path.parent.mkdir(exist_ok=True);path.write_bytes(row[key].encode())
+        rows.append(row)
+    original=dict(schema='a7c2-profile-library/2',count=7,desktop_version='3.10',profiles=rows)
+    (folder/'catalog.json').write_text(json.dumps(original),encoding='utf-8')
+    selected=profilepack.default_files(fixture,verify_pairs=False)
+    assert json.loads(selected['catalog.json'].read_text())['count']==6
+    assert json.loads((folder/'catalog.json').read_text())==original
     exe=tmp_path/'A7C2Tools/A7C2Tools.exe';exe.parent.mkdir();exe.write_bytes(b'test')
     (exe.parent/'a7c2-diagnostics.zip').write_bytes(b'private local diagnostic')
-    with patch.object(build,'profile_files',side_effect=lambda:profilepack.files(fixture)):
+    native={}
+    native_rows=[]
+    for slot,item in enumerate(defaults(),1):
+        name=f'slot{slot}.a7look';path=tmp_path/name;path.write_text(item['name'])
+        native[name]=path;native_rows.append(dict(slot=slot,name=item['name'],a7look=name))
+    catalog_path=tmp_path/'install-catalog.json'
+    catalog_path.write_text(json.dumps(dict(schema='a7c2-install-looks/1',count=6,profiles=native_rows)))
+    native['catalog.json']=catalog_path
+    with patch.object(build,'install_files',return_value=native):
         result=build.make_windows_zip(tmp_path)
     assert result.name=='A7C2Tools-Windows-x64.zip'
     with zipfile.ZipFile(result) as z:
         assert z.read('A7C2Tools/A7C2Tools.exe')==b'test'
-        assert len([n for n in z.namelist() if n.endswith('.dcp')])==18
-        assert len([n for n in z.namelist() if n.startswith('A7C2Tools/Profiles/') and n.endswith('.a7look')])==18
+        assert len([n for n in z.namelist() if n.endswith('.dcp')])==0
+        assert len([n for n in z.namelist() if n.startswith('A7C2Tools/Profiles/') and n.endswith('.a7look')])==6
+        catalog=json.loads(z.read('A7C2Tools/Profiles/catalog.json'))
+        assert [row['name']for row in catalog['profiles']]==[row['name']for row in defaults()]
+        assert not any('Kodak UltraMax' in name for name in z.namelist())
         assert not any('diagnostics' in n for n in z.namelist())
 
 

@@ -1,0 +1,46 @@
+"""Build a local firmware candidate with optional owner signing; no device I/O."""
+import argparse
+import json
+from pathlib import Path
+import sys
+
+ROOT=Path(__file__).resolve().parents[2]
+sys.path.insert(0,str(ROOT/'src'))
+
+
+def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('source',type=Path,help='Official C2 2.01 DAT or decoded FDAT')
+    parser.add_argument('--output',type=Path,required=True)
+    parser.add_argument('--update-version',default='3.01')
+    parser.add_argument('--whitebalance',action='store_true')
+    parser.add_argument('--ssh',action='store_true')
+    parser.add_argument('--client-key',type=Path)
+    parser.add_argument('--artifacts',type=Path)
+    parser.add_argument('--no-fl23',action='store_true')
+    parser.add_argument('--sound',action='store_true')
+    parser.add_argument('--custom-looks',action='store_true',help='Enable six neutral custom slots when no preset is selected')
+    parser.add_argument('--vertical',action='store_true',help='Build independent native portrait resources')
+    parser.add_argument('--precapture',action='store_true',help='Reserved selection; refused until the research branch is integrated')
+    parser.add_argument('--no-default-looks',action='store_true')
+    parser.add_argument('--signing-private-key',type=Path)
+    parser.add_argument('--signing-public-key',type=Path)
+    parser.add_argument('--signing-container',type=Path,help='Original DAT metadata when source is decoded FDAT')
+    args=parser.parse_args()
+    from desktopapp.firmwarelocal import build
+    request=dict(sony_firmware=str(args.source),workspace=str(args.output),update_version=args.update_version,
+                 whitebalance=args.whitebalance,ssh=args.ssh,fl23=not args.no_fl23,sound=args.sound)
+    request.update(custom_looks=args.custom_looks or not args.no_default_looks,vertical=args.vertical,precapture=args.precapture)
+    if not args.no_default_looks:
+        from desktopapp.presets import PACK
+        request['preset_pack']=PACK
+    if args.client_key:request['client_key']=str(args.client_key)
+    if args.artifacts:request['artifacts']=str(args.artifacts)
+    if args.signing_private_key:request['signing_private_key']=str(args.signing_private_key)
+    if args.signing_public_key:request['signing_public_key']=str(args.signing_public_key)
+    if args.signing_container:request['signing_container']=str(args.signing_container)
+    result=build(request,args.output.parent)
+    print(json.dumps(result,indent=2,ensure_ascii=False))
+
+
+if __name__=='__main__':main()

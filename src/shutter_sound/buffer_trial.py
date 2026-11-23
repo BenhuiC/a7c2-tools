@@ -196,30 +196,9 @@ def replace_completed_marker(camera, root, previous_jobs):
     raise ValueError('现有声音标记无法对应到已完成的试听报告，已保存原标记；未覆盖未知运行任务。')
 
 
-def retire_recovered_marker(camera, root, previous_job):
-    previous = json.loads((Path(previous_job) / 'job.private.json').read_text(encoding='utf-8'))
-    observation = previous.get('owner_observation', {})
-    recovered = previous.get('owner_cold_recovery_confirmed') or (
-        previous.get('temporary_CP_lease_ended_by_owner_cold_power_off') and
-        observation.get('original_sound_after_cold_power_off') == 'restored' and
-        observation.get('shooting_and_playback_after_cold_power_off') == 'normal')
-    if not recovered or previous['identity'] != camera.identity:
-        raise ValueError('Retire only a same-body marker after owner-confirmed cold recovery')
-    actual = camera.read('/tmp/jiritsu/shutter.custom.lease', True)
-    if actual is None:
-        return {'previous_marker_absent': True, 'camera_memory_or_firmware_changed': False}
-    if actual != initial_marker(previous):
-        raise ValueError('Marker belongs to another or unknown attempt; preserve it')
-    (Path(root) / 'retired-marker.before.private.bin').write_bytes(actual)
-    camera.temp_remove('shutter.custom.lease')
-    if camera.read('/tmp/jiritsu/shutter.custom.lease', True) is not None:
-        raise ValueError('Known recovered marker removal not confirmed')
-    return {'same_attempt_marker_removed_after_owner_cold_recovery': True,
-            'previous_job': str(Path(previous_job).resolve()),
-            'camera_memory_or_firmware_changed': False}
 
 
-def run(root, original_job, zig=None, *, payload=None, register=False, wire_format=1, recovered_job=None,
+def run(root, original_job, zig=None, *, payload=None, register=False, wire_format=1,
         replace_jobs=()):
     if register and wire_format != 0:
         raise ValueError('The first PCM16/format-1 trial produced noise or wrong sound. '
@@ -247,9 +226,6 @@ def run(root, original_job, zig=None, *, payload=None, register=False, wire_form
     trial.save(root, state)
     try:
         with trial.factory(original['identity']) as camera:
-            if recovered_job is not None:
-                state['prior_marker_retirement'] = retire_recovered_marker(camera, root, recovered_job)
-                trial.save(root, state)
             ap = camera.read('/usr/lib/appFw.so')
             cp = camera.read('/cp/cpapp-b.bin')
             if cp[candidate.OFFSET:candidate.OFFSET+2]==candidate.BEFORE:
@@ -259,7 +235,7 @@ def run(root, original_job, zig=None, *, payload=None, register=False, wire_form
                 raise ValueError('请重新开启电子快门声以更新机械快门过滤，再进行试听；本次未注册声音。')
             worker = build(ap, root / 'build', zig, payload=payload, register=register, wire_format=wire_format, lease_token=token)
             camera.programs_pinned = True
-            if register and replace_jobs and recovered_job is None:
+            if register and replace_jobs:
                 state['prior_marker_replacement']=replace_completed_marker(camera,root,replace_jobs)
                 trial.save(root,state)
 
@@ -298,35 +274,8 @@ def run(root, original_job, zig=None, *, payload=None, register=False, wire_form
     return state
 
 
-def confirm(root, result):
-    """Record the owner's listening result offline; never infer it from an ACK."""
-    root = Path(root)
-    state = json.loads((root / 'job.private.json').read_text(encoding='utf-8'))
-    if state['phase'] != 'temporary_pcm_registered_cold_reload_required_after_test':
-        raise ValueError('Use the completed current temporary-registration job')
-    if result == 'correct' and state.get('wire_format') != 0:
-        raise ValueError('The PCM16/format1 route has no validated playback implementation')
-    state['owner_listening_result'] = result
-    state['owner_audio_correct'] = result == 'correct'
-    state['owner_source_recognized'] = result in ('correct', 'quiet')
-    state['phase'] = ('owner_requested_gain_adjustment_cold_reload_required' if result == 'quiet' else
-                      'owner_confirmed_audio_cold_reload_required' if result == 'correct' else 'owner_audio_failed_cold_reload_required')
-    state['next_physical_action'] = 'Cold power-off clears the temporary registration and CP lease; confirm native sound/shooting, then reconnect only for the next explicit operation.'
-    trial.save(root, state)
-    return state
 
 
-def confirm_recovery(root):
-    root = Path(root)
-    state = json.loads((root / 'job.private.json').read_text(encoding='utf-8'))
-    if state['phase'] not in ('owner_confirmed_audio_cold_reload_required', 'owner_audio_failed_cold_reload_required',
-                              'owner_requested_gain_adjustment_cold_reload_required'):
-        raise ValueError('First record the completed temporary trial listening result')
-    state['owner_cold_recovery_confirmed'] = True
-    state['temporary_CP_lease_ended_by_owner_cold_power_off'] = True
-    state['phase'] = 'owner_confirmed_cold_recovered'
-    trial.save(root, state)
-    return state
 
 
 def main(argv=None):
@@ -349,23 +298,7 @@ def main(argv=None):
     source_r.add_argument('--native-bin', type=Path, help='Explicit filter0 format0 research payload')
     r.add_argument('--temporary-register', action='store_true',
                    help='Only the filter0 format0 research route is enabled; PCM16/format1 remains disabled')
-    r.add_argument('--after-recovered-job', type=Path,
-                   help='Retire only that exact attempt marker after already recorded owner-confirmed cold recovery')
-    c = sub.add_parser('confirm', help='Record the actual owner listening result; offline, no camera access')
-    c.add_argument('--job', type=Path, required=True)
-    c.add_argument('--result', required=True, choices=('correct', 'quiet', 'noise', 'wrong-speed', 'native', 'silent'),
-                   help='correct means source content/pitch/speed and shooting/playback all verified by the owner')
-    recovery = sub.add_parser('confirm-recovery', help='Offline owner statement: cold power-off completed and native sound/shooting/playback are normal')
-    recovery.add_argument('--job', type=Path, required=True)
     a = p.parse_args(argv)
-    if a.command == 'confirm-recovery':
-        state = confirm_recovery(a.job)
-        print(json.dumps({'phase': state['phase'], 'camera_io': False}, indent=2))
-        return
-    if a.command == 'confirm':
-        state = confirm(a.job, a.result)
-        print(json.dumps({k: state[k] for k in ('phase', 'owner_audio_correct', 'next_physical_action')}, indent=2))
-        return
     payload = None
     if a.wav:
         from custom_sound import pcm_candidate
@@ -376,7 +309,7 @@ def main(argv=None):
     if a.command == 'build':
         print(build(a.ap.read_bytes(), a.output, a.zig, payload=payload, register=a.temporary_register, wire_format=wire_format))
     else:
-        print(json.dumps(run(a.job, a.native_sound_job, a.zig, payload=payload, register=a.temporary_register, wire_format=wire_format, recovered_job=a.after_recovered_job), indent=2))
+        print(json.dumps(run(a.job, a.native_sound_job, a.zig, payload=payload, register=a.temporary_register, wire_format=wire_format), indent=2))
 
 
 if __name__ == '__main__':

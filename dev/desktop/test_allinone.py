@@ -5,10 +5,26 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
+import pytest
 from desktopapp import allinone
 
 
 class AllInOneTests(unittest.TestCase):
+    def test_native_portrait_migration_waits_before_lut_install_then_continues(self):
+        def migrating(action,args,folder):
+            if action=='vertical_enable' and not self.booted:
+                self.calls.append((action,args))
+                return dict(phase='AWAITING_RELOAD',migration_pending=True,mode='vertical_native_prepare')
+            return self.dispatch(action,args,folder)
+        result=allinone.run(self.args,dispatch=migrating)
+        self.assertEqual(result['phase'],'PREPARING_VERTICAL')
+        self.assertTrue(result['reload_required'])
+        self.assertNotIn('direct_install_all',[a for a,_ in self.calls])
+        self.booted=True
+        result=allinone.run(self.args,dispatch=migrating)
+        self.assertEqual(result['phase'],'WAIT_RELOAD')
+        self.assertEqual([a for a,_ in self.calls].count('direct_install_all'),1)
+
     def test_plugin_failure_retries_host_step_without_opening_camera(self):
         root=self.root/'host-only';install=root/'install';install.mkdir(parents=True)
         (install/'direct.private.json').write_text(json.dumps(dict(phase='LOADED',bundle_options=dict(looks=[]))))
@@ -56,6 +72,8 @@ class AllInOneTests(unittest.TestCase):
 
     def dispatch(self, action, args, folder):
         self.calls.append((action, args))
+        if action=='voice_cleanup':
+            return dict(phase='COMPLETED',voice_audio_removed=True,voice_setting_locked_off=True,voice_menu_flags_verified=True)
         vertical=dict(persistent=True, loaded_verified=True, running='ON', saved='ON', alias_count=3)
         if action == 'direct_install_all':
             return dict(phase='AWAITING_RELOAD', mode='install_all', workspace=args['workspace'], vertical_result=vertical)
@@ -69,7 +87,7 @@ class AllInOneTests(unittest.TestCase):
     def test_one_write_then_wait_then_verify_then_vertical(self):
         state = allinone.run(self.args, dispatch=self.dispatch)
         self.assertEqual(state['phase'], 'WAIT_RELOAD')
-        self.assertEqual([a for a, _ in self.calls], ['usb_prepare', 'vertical_enable', 'direct_install_all'])
+        self.assertEqual([a for a, _ in self.calls], ['usb_prepare', 'voice_cleanup', 'vertical_enable', 'direct_install_all'])
         self.assertTrue(self.calls[1][1]['power_confirmed'])
         state = allinone.run(self.args, dispatch=self.dispatch)
         self.assertEqual(state['phase'], 'WAIT_RELOAD')
@@ -79,7 +97,7 @@ class AllInOneTests(unittest.TestCase):
         self.assertEqual(state['phase'], 'COMPLETE')
         self.assertEqual([a for a, _ in self.calls].count('direct_install_all'), 1)
         self.assertEqual([a for a,_ in self.calls][-2:], ['direct_verify','sound_on'])
-        self.assertTrue(self.calls[2][1]['options']['vertical_persistent'])
+        self.assertTrue(next(args for action,args in self.calls if action=='direct_install_all')['options']['vertical_persistent'])
         self.assertEqual([a for a,_ in self.calls].count('vertical_enable'),1)
         self.assertFalse(state['physical_checks_accepted'])
         before = list(self.calls)
@@ -195,10 +213,9 @@ class AllInOneTests(unittest.TestCase):
             self.assertEqual(self.calls, [])
 
     def test_new_install_does_not_inspect_historical_factory_verification(self):
-        with patch('looktool.factoryrecover.pending',side_effect=AssertionError('No historical verification gate')):
-            result=allinone.run(self.args,dispatch=self.dispatch)
+        result=allinone.run(self.args,dispatch=self.dispatch)
         self.assertEqual(result['phase'],'WAIT_RELOAD')
-        self.assertEqual([a for a,_ in self.calls],['usb_prepare','vertical_enable','direct_install_all'])
+        self.assertEqual([a for a,_ in self.calls],['usb_prepare','voice_cleanup','vertical_enable','direct_install_all'])
 
     def test_saved_configuration_is_not_replaced_mid_install(self):
         allinone.run(self.args, dispatch=self.dispatch)
@@ -312,6 +329,7 @@ def test_missing_exiftool_is_prepared_before_first_device_call(tmp_path,monkeypa
     calls=[]
     def dispatch(action,args,folder):
         calls.append(action)
+        if action=='voice_cleanup':return dict(voice_audio_removed=True,voice_setting_locked_off=True,voice_menu_flags_verified=True)
         if action=='vertical_enable':return dict(phase='AWAITING_RELOAD',workspace=args['workspace'])
         if action=='direct_install_all':
             assert args['options']['exiftool']==str(tool)
@@ -323,7 +341,7 @@ def test_missing_exiftool_is_prepared_before_first_device_call(tmp_path,monkeypa
         result=allinone.run(args,dispatch=dispatch)
     prepare.assert_called_once_with('old-computer/missing.exe')
     assert result['phase']=='WAIT_RELOAD'
-    assert calls==['usb_prepare','vertical_enable','direct_install_all']
+    assert calls==['usb_prepare','voice_cleanup','vertical_enable','direct_install_all']
 
 
 def test_helper_download_failure_does_not_open_camera(tmp_path,monkeypatch):
@@ -335,3 +353,51 @@ def test_helper_download_failure_does_not_open_camera(tmp_path,monkeypatch):
             allinone.run(dict(workspace=str(tmp_path/'work'),firmware='2.01',power_confirmed=True,
                 options=dict(plugin=True,looks=[])),dispatch=dispatch)
     dispatch.assert_not_called()
+
+
+@pytest.mark.parametrize('phase',['NEEDS_REVIEW','RESOURCE_RELOAD_VERIFIED','READING'])
+def test_unfinished_program_result_never_finishes_setup(tmp_path,phase):
+    args=dict(workspace=str(tmp_path/'setup'),firmware='2.01',power_confirmed=True,
+              options=dict(sound=False,vertical=False,plugin=False,looks=[]))
+    def dispatch(action,values,folder):
+        if action=='voice_cleanup':return dict(voice_audio_removed=True,voice_setting_locked_off=True,voice_menu_flags_verified=True)
+        return dict(phase=phase,workspace=values.get('workspace',''))
+    with pytest.raises(ValueError,match='程序安装尚未完成'):
+        allinone.run(args,dispatch=dispatch)
+    state=json.loads((tmp_path/'setup/setup.private.json').read_text())
+    assert state['phase']=='NEEDS_REVIEW'
+    assert 'persistent_features' not in state['completed_steps']
+
+
+@pytest.mark.parametrize('phase',['AWAITING_RELOAD','AWAITING_RESOURCE_RELOAD','NEEDS_REVIEW'])
+def test_unfinished_verify_result_does_not_run_finalizers(tmp_path,phase):
+    root=tmp_path/'setup';root.mkdir()
+    state=dict(schema='a7c2-one-click/1',phase='WAIT_RELOAD',workspace=str(root),
+               options=dict(sound=True,vertical=False,plugin=True,looks=[]),
+               completed_steps=['drivers','persistent_features'])
+    (root/'setup.private.json').write_text(json.dumps(state))
+    calls=[]
+    def dispatch(action,values,folder):
+        calls.append(action)
+        return dict(phase=phase,workspace=str(root/'install'))
+    with pytest.raises(ValueError,match='重启后核对尚未完成'):
+        allinone.run(dict(workspace=str(root),firmware='2.01',power_confirmed=True),dispatch=dispatch)
+    saved=json.loads((root/'setup.private.json').read_text())
+    assert saved['phase']=='WAIT_RELOAD' and calls==['direct_verify']
+
+
+def test_plugin_activation_includes_st_reset_slots(tmp_path):
+    root=tmp_path/'setup';install=root/'install';install.mkdir(parents=True)
+    child=dict(bundle_options=dict(looks=[],reset_slots=[4]),job_id='current-mixed-install',
+               raw_profile_effective_since='2026-10-24T12:00:00')
+    (install/'direct.private.json').write_text(json.dumps(child))
+    state=dict(schema='a7c2-one-click/1',phase='FINALIZING',workspace=str(root),
+               options=dict(plugin=True,sound=False,vertical=False,looks=[]),
+               completed_steps=['drivers','persistent_features'],install_workspace=str(install))
+    (root/'setup.private.json').write_text(json.dumps(state))
+    with patch('looktool.rawidentity.activated',return_value=dict(status='published')) as activated:
+        result=allinone.run(dict(workspace=str(root),firmware='2.01',power_confirmed=True),
+            dispatch=lambda *args:dict(plugin='installed'))
+    assert result['phase']=='COMPLETE'
+    activated.assert_called_once_with([dict(name='ST',raw_profile=None)],[4],
+        'current-mixed-install','2026-10-24T12:00:00')

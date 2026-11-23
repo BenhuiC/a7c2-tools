@@ -1,11 +1,478 @@
 # 开发说明
 
+## 平均ΔE00与原生参数优先拟合（2026-11-23）
+
+开发源码的连续训练、原生／网格整数精修及候选评分统一使用平均CIEDE2000数据项。
+先拟合Gamma／CC1／block13，再补网格，最后联合调整四者。Gamma保留原128点横轴、
+单调性、整数编码与C2实际展开检查，允许曲率改变符号。训练权重以广域颜色为主，
+保留较小的灰阶／原色／色卡／色相锚点权重；验证选优同时计入相同的轻网格惩罚。
+RGB RMSE仅作为对照指标。
+
+默认六款采用新拟合器。四款富士保留原参考；理光正片／负片改用用户提供的
+Cobalt Ricoh GR v3.1普通XMP与匹配的C2 Modular v2.1基础配置，由真实Adobe导出
+RGB16目标，曝光0、强度1。传感器三通道输入与正式C2样本逐值匹配，不插值补色。
+下表在同一算子、19909个验证点上重评旧／新参数的平均ΔE00：
+
+| 外观 | 旧参数 | 新参数 |
+| --- | ---: | ---: |
+| Fujifilm Classic Negative | 2.362 | 1.274 |
+| Fujifilm Classic Chrome | 2.054 | 0.960 |
+| Fujifilm Nostalgic Negative | 2.429 | 1.319 |
+| Fujifilm Astia | 2.828 | 1.425 |
+| Ricoh Positive Film | 5.674 | 1.022 |
+| Ricoh Negative Film | 4.365 | 1.003 |
+
+理光的参考颜色已改变；表中旧参数也是对新Cobalt目标重评，不能直接拿旧版对额外0.7EV
+参考的历史分数比较。新版理光默认文件不嵌入不匹配的旧DCP，不声称等于原厂理光固件。
+本次范围仅默认六款；其他完整库条目未批量重训。两款理光对新目标拟合时网格幅度比旧参数
+增加，不宣称六款都更少依赖网格。A7Look /2、机内ABI和固件生成器保持。
+这些是色卡／模型结果，不是C2实机色彩验收。Windows与Apple Silicon Mac包接入新拟合器
+和六默认；共享云端转换器及完整云创库属于独立部署。
+
+## 重复授信与恢复入口（2026-11-23）
+
+首次授信、安装向导和高级设置提供“恢复授信（恢复原厂公钥）”，沿用本机首次备份的恢复流程。
+已完成的公钥安装可以重复执行；上次尝试写入但结果不明时仍停止。更新器编辑器可识别本工具
+已经安装的指令，同一公钥再次安装不产生变化扇区。保留同一机身首次原始备份，不用重复授信
+产生的记录替换它。卡刷恢复的完成提示明确要求：版本设为2.00后，手动卡刷2.01恢复包。
+本轮仅检查保存镜像与打包程序界面，不代表实机刷写或冷启动验收。
+
+## macOS 3.10 打包（2026-11-16）
+
+Apple Silicon 版向导为三步：生成固件、首次授信、写配置后手动卡刷，
+不包含驱动安装步骤；独立 USB 连接页保留原生访问与存储卷处理。
+Windows 保留四步向导。两平台只附同一套六款带图标原生外观，完整41对云端库独立分发。
+Mac App 内置原生 debugfs／e2fsck 及对应源码说明，通过随 App 的 Python
+直接调用原有镜像编辑器，用户无需另装 Python 或 Homebrew。
+原有固件签名身份由原生构建单独注入；打包检查不等于实机操作或验收。
+
+原生构建快照还必须携带 `desktop-assets/ssh/dropbear`、`password.hash`
+及 `dropbear-LICENSE.txt`；这是相机 Linux 的输入文件，不是 Mac 主机程序。
+缺件时在打包阶段停止。新增实际 App 的 `firmware_build` 完整检查，
+用官方2.01输入和默认SSH／六款／音效／竖屏选项，覆盖签名3.10输出及原读回流程；
+仅启动GUI和编辑合成镜像不能代替该检查。官方输入和生成固件仅留runner临时目录，
+不进Git、DMG或上传产物。
+
+3.10 固定外观配方现在覆盖取景状态转换器的基础风格分支：`0x23e319c`、
+`0x23e31b8` 和 `0x23e3210`。复用原厂当前设置查询和已有槽位小图标／选中配色，
+保留原函数栈帧、隐藏条件、原厂查表及非法值诊断。已有固定外观 AP 仍可用于
+设置操作；下次生成固件会编入这项显示修正。原生指令检查与实机竖屏目视验收分开。
+
+## 3.10 — 统一机内API与精简传输 (2026-11-13)
+
+USB 与 Wi-Fi 的日常外观、音效保存和开关统一调用机内 a7c2-api。写入前一次 info 同时返回能力和任务状态，批量外观共用这一响应；不再读取旧整份 AP/CP 或要求旧 baseline、上次任务手动确认。APK 自动确认已知终态，丢失回复时只查询状态、不重发写入。
+
+外观传输使用无 CRC32／SHA-256 尾部的精简格式：完整颜色 3387 字节，带图标 4249 字节；旧颜色带图标 2186 字节。A7Look /2 文件和既有 CP 内部记录布局不变，内部原有记录编码不作为新传输摘要门禁。目标范围、数据结构和数值范围仍检查，写后逐字节读回。音效复用有界 undo，音频和 CSV 临时文件同步后替换，失败恢复原文件或原先不存在的状态。
+
+USB 通过一次性子进程调用同一静态 API，不替换 App 主进程，不安装常驻服务。生成器在未勾选 SSH 时也装入 API，但不会因此启用 SSH。Windows 仍原生运行。当前检查只涉及电脑文件、AArch64 进程和模拟连接；没有更新用户相机、安装 APK、验证冷启动试听或实机 USB 桥。新客户端需配套此版机内 API。版本保持 3.10，默认六款，原厂签名与 WBI 规则不变。
+
+恢复规划保留原生4字节dat2/dat3文件的FAT创建／修改时间字段；按原记录的
+FAT12根目录定位，原分配与目录布局必须保持。其余任何范围外字节变化仍停止。
+候选保留当前时间字段，避免恢复时改写这个目录扇区；重开核对沿用同一窄范围规则，
+内容变化仍报错。实机只读演练已复现旧误拦；完整恢复及失败场景仅在电脑内存中
+使用真实读回数据模拟，没有实际恢复相机授信，不等于分区写入或更新器启动验收。
+版本仍3.10，没有新增验证哈希、启动挂接或机内界面。
+
+
+授信恢复仍在发现原安装扇区范围外的变化时，于分区写入前停止；现在记录
+首个差异字节地址、受影响扇区数与有限范围列表。诊断导出可直接读取电脑上旧失败
+任务保存的对照镜像补出这份报告，不重连相机、不收录分区镜像；本地原件缺失时
+明确说明。重开程序后，“导出诊断包”可选择已有 request.private.json。
+这是定位信息与导出流程修正，尚未解决具体未知分区变化，不跳过原恢复边界。
+旧USB原厂恢复仍停用，使用版本准备后手动卡刷的现有流程。版本保持3.10，
+没有新增验证哈希或相机写入。
+
+
+修复卡刷固件已预装音效加载代码、但首次自定义尚无配置时，USB保存报
+`Installed sound hook lacks its configuration`。仅在确认配置不存在、没有旧自定义
+音频文件及运行引用时初始化；损坏配置或旧音频仍保留并停止。已确认只读准备完成且
+尚未发布音频／程序的旧失败记录可解除占用，未知写入结果仍不重放。原文件发布顺序、
+另一种快门的音效和设置保持。此修复在电脑工具内，版本仍3.10，不要求重刷固件。
+
+
+普通固件与原厂内容恢复包在现有签名和完整解密读回通过后，直接输出 `BODYDATA.DAT`。
+成功后删除解包镜像、未签名FDAT、临时TAR及其余构建中间文件；所选目录中的无关文件保留。
+后续SSH更新所需基线、主机密钥及构建记录保留在工具的该次任务目录，连接页自动使用新基线。
+失败现场保留。不会把原始输入 `BODYDATA.DAT` 当成输出覆盖；来源和输出重名时在删除前停止。
+版本仍3.10，不新增验证哈希，不操作相机或SD卡。
+
+
+版本固定为3.10，不递增。Windows从`/2`配对目录仅选默认六款；完整41款单独供
+索尼云创分发，不装入Windows。DCP、普通A7Look、图标副本与内嵌源数据
+须一致，原生载荷格式保持不变。`looktool/dcpexport.py`复用本项目DCP制作方法
+和内置Sony Camera ST标定生成CUBE配套文件，不安装机内加载器或写设备。
+CLI／桌面接口返回两种输出路径。Windows由`profilepack.install_files`统一为spec和ZIP选择
+六份带图标、可刷入的A7Look，去掉内嵌RAW参考、DCP附件和普通/图标重复副本，完整源库与云创库保留。Windows的六款位于`Profiles`，资源
+检查读取该位置；原标定／配置资产保留归属，作为分发资产，不声明为新增MIT源码。
+
+固件页将“应用自定义外观”与“默认六款／自选文件”分开选择。切换方案保留
+自选草稿，但默认方案和关闭外观时不提交隐藏草稿；固件自选编辑器明确未选择
+的槽位使用原生 ST。这项界面调整不新增任何哈希门禁。
+
+一键恢复改为 USB／SSH 版本准备：将原厂两字节 `dat4` 设为 2.00，读回后由用户手动卡刷。
+USB 只写版本资料，不再通过旧恢复计划改写 AP／CP，也不从旧 `LOADED`／等待重启记录续接。
+原厂内容恢复包在电脑上由用户的官方 2.01 生成：机身内容保持原样，包头保持 3.10，
+沿用当前工具签名。直接刷索尼原签名包另需恢复原厂授信；降版本号不能代替授信恢复。
+此修复仅做离线事务和实际 EXE 按钮派发检查，未操作相机或验收完整卡刷恢复。
+
 [首页](../../README.zh-CN.md) · [English](../en/development.md)
 
 这一篇是给维护者和 AI 的唯一总览。先读 [AGENTS.md](../../AGENTS.md)：那里是不能违反的规则。本页讲代码怎么组织、怎么协作；细节请直接看本页指向的代码。
 
+## 当前状态与共享知识
+
+本轮已用普通生成器重建最新未签名3.10包，并从最终包提取84个候选文件，在独立
+Linux／App VM中执行一笔第二槽API写入。完整CP、68名称及四图标目标像素读回、
+正常OFF和重开文件保留通过；实际更新CP另经原生四核初始化检查。RAM块设备的
+导出／重新装入仍不证明NAND、完整AP-CP启动或实体取电池后生效。没有新增相机提示菜单，
+没有替换现用EXE／用户VM。
+
+## 当前决定：写盘后取电池重开（2026-11-09）
+
+用户取消即时刷新：外观API只更新持久文件，不写运行CP RAM，不重新应用当前外观，
+也不刷新名称／图标缓存。写入成功仍为`pending_reload`，明确返回`reload_required:true`、
+`restart_method:"battery_removal"`、`live_reload:false`和`runtime_verified:false`。
+手机／桌面客户端应提示：等读写结束并等存取灯停，关机等灯灭，断开USB及其他供电，
+取电池至少1分钟，再装回开机；随后人工确认颜色、名称和图标。
+保留既有task状态兼容，`active`只表示观察到启动身份变化，不证明CP或资源缓存已加载；
+新增回执明确这一边界，不增加任何写入门禁。普通生成器使用同一无刷新API源码。
+测试直写后端从产品command.c撤下，旧VM源码／报告留在研究目录；不再继续生产热重载接线。
+真正完整冷加载、旧WBI恢复及实机断电后生效仍未验收；本次不改WBI、启动链或用户VM。
+
+普通固件生成器在启用自定义外观时默认迁移到 CP 固定区；实现以动态实验前的静态
+基线为基础。`fixedruntime.py` 只在电脑打包时工作，不是机内加载服务。
+`fixedregion.py` 沿原初始化复制数据、清状态并调用原映射器；保留 SOLID 和原19项
+区域记录，以 `A7_FIXED` 命名目标视图恢复固定区映射。地址均为 CP 虚拟地址，结束不含：
+
+| 范围 | 容量 | 用途 |
+| --- | --- | --- |
+| `0x02700000–0x02880000` | 1.5 MiB | RX 代码 |
+| `0x02880000–0x02A80000` | 2 MiB | RW/XN 状态 |
+| `0x02A80000–0x02B00000` | 512 KiB | RW/XN 外观数据 |
+
+外观 root 仅含 `base,size`。六槽映像83,456字节，18条容量夹具233,984字节；
+菜单仍为六槽。RAM容量不等于持久文件源容量：当前代码源89,088字节、数据源252,800
+字节，CP总长保持18,090,880字节。大块RAW／图像缓存仍使用原厂DMM。
+
+`fixedbankcode.py` 将五处Gamma表获取、selector、矩阵、两类色度及预览checker
+接到新源，保留原FL2／FL3及既有EVF双帧确认。固定读取代码860字节，无外观malloc。
+API、SSH和USB直接导入的既有规划／读回接口都识别固定源，保留其他槽和AP；API／SSH
+沿用名称与四套横竖图标事务，USB仍只接收普通无图标文件。API写盘使用现有base字保护
+提交顺序，未知结果保留证据而不重放。
+
+以下为已撤下的历史诊断：用户此前要求一次API更新文件和固定RAM，不拆reload命令或三个辅助函数；未安装的App
+通知提议已撤下。`API_FIXED_DIRECT_VM`直接接在cleanup内：关闭writer、恢复只读，
+覆盖目标RAM槽／目录／mask并读回。它必须配合`CAMERA_API_TEST`，委托FD与QMP转换
+的宿主地址写入运行中的CP QEMU，不是实机AP/CP映射。一笔ARM64第二槽API期间，
+Cortex-A9执行原生reader并读到新曲线；4MiB、六槽地址、base/size和其他槽检查通过。
+另两项自有宿主内存失败夹具保留已提交／未知结果，不重发。这不计自动重应用、App名称／
+图标刷新、实机PCIe／缓存或旧RAM／WBI恢复通过。普通构建仍报告`live_reload:false`，
+没有App监听器或新启动挂接，现用候选未替换；原task的boot ID变化仅是重启观察，
+不是CP RAM读回。不引入动态代码平台、generation／ready或新验证哈希。此固定版恢复通过刷固件，
+旧USB区域恢复不扩展到固定源。旧布局代码保留兼容，下面关于prefix的说明仅适用旧布局。
+
+普通生成器已产出3.10未签名候选；静态三组合、实际ARM64 API文件夹具、六槽USB规划、
+SSH批量及名称／图标读回通过。消费者及原冷初始化检查沿用逐字相同的既有证据，
+未重复运行。完整CP OS／系统启动、热恢复、视频渲染与长期稳定仍未验收；未替换现用
+EXE／VM或操作实体机。`verify_static_fixed_source.py`和`verify_static_fixed_interfaces.py`
+需要明确指定私有输入，仅作离线检查。
+
+后续独立VM检查分两层通过：QEMU四核Cortex-A9执行原CP复制／清零／区域初始化，
+4MiB固定区、1024页描述符和六槽地址正确；原厂Linux内实际API一笔第二槽写入完成
+完整CP／68名称及四图标变更区段／8个解码图案读回，原生ext2恢复只读，正常OFF保存通过。
+实际导出的CP再经同一CP初始化检查；重开检查确认新源、名称与图标文件保留。
+诊断VM的/cp和/usr是RAM块设备上的ext2，跨启动显式导出并重新装入下一轮输入，
+不证明原厂NAND持久化、完整AP-CP OS／init2-WBI、可见菜单或拍摄视频。
+C／Python图标编码可以不同，应比较登记／原载荷及解码像素，不能为追求整文件编码一致
+误改图案。本轮未改变产品固件逻辑、未添加哈希门禁，测试实例已正常保存关闭。
+
+`looktool.looklabels` 与 `look-labels-v1.json` 统一41款完整显示名称和图标代码，
+重复图案仍逐款保留。内置六款图标为NC／CC／NN／AS／RP／RN，显示名称保留品牌与
+完整外观名。`iconfile.from_text` 接受1–4字符，在既有26×19蒙版中统一字高并适配
+字宽；F400／K400及四位片号不改变协议、边框、槽位ID或原生模型。
+
+资源准备与桌面打包会同步内置六款和配对库的已知名称。保留供USB直接导入的普通版，
+另提供明确的`MenuIcons`图标版用于机内API／SSH／生成固件。只更新名称和图案时，
+DCP原件、RAW描述和色彩数据保持原样；3.0.5另按下文的C2 Hybrid流程重拟合原生
+系数与网格。41款原生库与既有已接受的DCP配对库仍分别登记，不将它们混称为同一套
+配对交付。
+
+桌面A7Look生成器会为已知来源建议完整名称和图标，提供1–4字符编辑、实时预览及
+显式的附带图标开关。CLI支持`--menu-icon-text F400`或`--without-menu-icon`；
+已知名称默认使用已确认图案。未知自订名称保持不变，可指定图标。USB直接导入需选择
+普通无图案版，其动态图案链路仍未接入。图标编辑器另存时也会规范已知旧名称。
+
+
+本地固件合成现由 `fixedlooks.py` 按所选槽 mask 构造固定预设：复用原函数范围限制基础风格为 ST，保留八项独立微调，并采用普通预设的参数页导航。清空全部槽后仍保留再次导入的能力；原厂恢复移除该能力。部分代际及色彩／菜单 mask 不一致会拒绝。
+
+图案按原有图片 ID 生成四套大／小外观状态，再生成横竖资源；回放图标翻译识别六个槽位标记，保留其他原厂取值和有效标志。标记表示槽位，不是不可变的历史外观版本。原生指令及资源测试验证调用路径；实际照片解析、可见菜单、召回及回放仍需实机验收。动态图案发布现接入能力协商的机内 API 与下述 SSH 批量发布；USB direct 仍未接入。
+
+`dev/desktop/verify_fixed_looks_native.py` 与 `verify_fixed_icon_routes.py` 接收明确提供的原厂 AP，报告夹具边界，不访问相机。本功能不扩张 RX 段、不注册新图片 ID，不改变内核或 WBI 规则。
+
+本地固件组合对 C2 原厂 WBI 应用已核对的 R5 配方：偏移3从0x32改为0x33，
+即 `WBI2` 改为 `WBI3`，其余字节全部保留。`firmwarewbi.py` 将最终成员与
+原始来源完整对比；`firmwarelocal.py` 在签名前重算对应分区 CRC。
+`firmwarearchive.py` 只覆盖等长成员内容，保留原 TAR 头、填充和尾部。
+未经验证的空白 WBI 试验已撤回。更新时清除机身旧 WBI，不能代替
+处理随后随包写入的原厂快照。`sshboot.py` 在原厂 `bootin.elf` 发起后
+通过后台进程运行 Wi-Fi 事件接收器，不等待，也不加入开机延迟自动加载外观。
+这些是打包／启动调用修正；完整实机冷启动和恢复仍未验收。
+内核文件未修改但使用诊断启动参数的 VM，不是完整相机启动测试。
+
+色彩准备分支已支持读写 `a7c2-creative-look/2`：`edit_native` 完整保留拟合参数、
+源基线与曲线轴，并携带原 signed7 网格。`editrecipe.py` 无损保存128个RAW Gamma
+纵坐标、276字节矩阵与8项CC1；未测量的原生终点有显式策略，二进制交换含长度及
+CRC／SHA检查。`photofull.py` 已实现完整原生曲线／矩阵／色度记录；
+`writer_document`、固件组合与固定SSH命令已接入。命令接受3423字节版本化包及
+旧1324字节包；完整C编译器已在ARM64上与Python逐字节对照。
+整个静态ARM64命令也已通过文件夹具更新及损坏包拒绝测试，并核对完整CP字节。
+原C2 ARM32函数的记录／ABI对照及损坏prefix回退通过。这些是离线检查；新增CP prefix仍依赖既有
+整档预载契约，物理加载与长期寿命尚未验收。RAW纵坐标差直接加到C2不同原生
+曲线域会非法，不能用裁切／平滑冒充完成转换。旧 `/1` 文件继续支持。
+所有现有彩色LUT均须经过最新拟合流程才能进入最终库；混用新旧参数的准备包
+仅作兼容夹具，不代表已经完成全部重拟合。
+
+独立主线验收版已将此格式与嵌入菜单图标整合，推荐缩写统一为
+NC／CC／NN／AS／RP／RN。添加或移除图标必须完整保留 `edit_native`、RAW
+配置与来源字段。独立PNG只是编辑输入，不是必须随文件分发的附属文件。
+最终重拟合配对库仍是独立交付项目。
+
+完整原生校验同时核对共享启用位及该槽全部14个Gamma指针，要求它们与已校验的
+prefix记录一致。中断更新后，不得用旧指针表启用已重排的参数记录；状态不一致
+时回退原生路径。
+
+可选的嵌入菜单图案已通过自选 `.a7look` 接入本地固件构建。`iconfile.py`
+验证可移植 PNG 蒙版；`menuicons.py` 仅替换 C2 现有 ST 槽位大／小图案记录
+的长度／引用字段，追加并复核 F0 载荷。旧载荷、其他记录及注册 ID 保持不变；
+原生竖屏库从修改后的横屏来源生成，并保留有效归属尾部。不分发索尼边框模板。
+GUI 另存新外观文件并保持拟合参数不变。机内 API 的 `info` 声明
+`menu_icons_protocol: 1`；`cameraapi.py` 在提交带图标外观前协商能力，旧命令不会
+收到仅颜色的部分更新。`iconprotocol.py` 使用 `A7ICLOOK` 封装旧1324字节或
+完整原生3423字节色彩包、固定26×19／22×16蒙版与SHA-256校验，总长2218或4317字节。
+机内命令在同一有界日志事务中更新CP、名称和四个现有横竖图片库，保留旧载荷、
+其他槽记录、注册ID及竖屏归属尾部。已知失败回退并读回；结果不明只核对已记录结果，
+不得重放。SSH批量发布同样编译、读回这四个固定路径，并在重开核对后纳入下次基线。
+USB direct仍在访问设备前拒绝带图标文件。`files`、有界`readback`、`undo`与
+`result`仅供root只读诊断固定文件，不接收任意路径或shell。不改变内核、WBI、
+看门狗、更新公钥或图片注册。可见菜单／取景／回放、实体传输与照片色彩仍需分别验收。
+
+首次授信页已接入 `trustinstall.py` 的显式 USB 安装、重开核对与原厂授信恢复。
+电脑读取本机 25,100,288 字节更新器分区，保存两份原始备份；公钥与四个验签库
+在原有五个压缩块内替换，保持文件长度、分配及其他成员不变，最后才写必要的
+`p1chksum` 扇区。准备镜像时先核对内核和 initrd 两份原始校验记录；损坏、缺失或
+重复的记录在设备写入前拒绝。临时 `trust_partition.c` 仅访问固定 `/dev/nflasha1`，按限定
+范围核对前置字节、写入、同步并读回，电脑随后核对整个分区。未知写入停止。
+恢复必须使用同机首次安装备份，以新读取字节建立独立事务，不重放原写入；
+核对上次已结束程序的结果后才清理临时文件，结果缺失或加载入口仍存在时要求
+断电重开。启动页面不连接相机，也不自动重启。QEMU 文件后端安装、恢复及中断
+场景通过；39 份正式程序也在原厂 C2 内核的隔离 loop 块设备完成原始备份与整个
+候选的字节核对，别名挂载时拒绝且零写入。该内核实际挂载本次精确 SquashFS，
+四库共 24 组 RSA 验签通过。
+这些测试使用诊断 init 与寄存器模型；完整更新器启动、首次实机安装及卡刷仍待
+验收。启动标识变化与分区读回不等于完整更新器验收。高级离线准备表单在创建
+输出前拒绝空来源，避免把当前目录误当成解包目录。
+
+滤镜／音效的 USB、SSH 改为两个互斥勾选框。Windows 冻结包优先使用有效的
+外置 `Profiles/catalog.json`，否则回退到包内 `desktop-assets/profile-library-v1`；
+目录缺失和系统打开失败会明确提示，冻结自检核对实际配对文件。
+恢复页把已有 SSH 原生版本资料的准备／应用串成一次操作，另行重开核对；只将
+已确认的研究版本改回2.00，不恢复原厂更新器信任／程序，也不代表官方包一定
+会被接受。原厂机身恢复候选生成器保留在高级离线工具中。打开页面不写设备。
+
+驱动步骤结束后明确提示相机取电池断电重开。Windows 两阶段准备在服务会话
+关闭后观察普通 USB 返回；未确认退出时单独停止，不引导继续反复装驱动。
+只读退出恢复不再把吞掉 USB 错误的底层 stop 返回当作成功。驱动卸载包含未绑定的
+相机专用 OEM 包，保留备份和无关／原生／共用驱动。Issue #64 的机身持续 USB
+身份原因仍未确定；电脑替身只复现了上述软件缺陷，没有复现该机身状态或写入设备。
+
+桌面左侧顺序为安装驱动、首次授信、生成固件、滤镜、快门音效、一键恢复、
+连接设置。滤镜与音效各自在同一编辑器中选择 USB 或 SSH，连接字段单独设置。
+音效导入、示例生成、试听及音量增减／还原都在电脑完成，两种传输使用同一份
+当前转换结果。电子／机械自定义声音以两个独立勾选框选择。SSH 音效使用固定
+机内命令；SSH 滤镜沿用单次基线批量发布，包含 ST 恢复，重开核对后才推进基线。
+这些接线只做离线验证，不增加实机验收或首次授信安装的完成范围。
+
+2026-11-05 桌面默认勾选所有已可用功能，并移除手动密钥选择。RSA-2048 应用签名
+身份在源码树外自动生成，只加入本地应用分发包；签名私钥留在电脑，固件／授信
+策略文件只包含公钥材料。界面选择原始官方 DAT 后自动签名；高级 CLI 仍保留
+显式密钥与未签名离线输出。
+
+云创 SSH 使用独立进程内的 root 密码登录，默认 `root`／`A7C2Tools`、端口2222。
+重建的 Dropbear 从其私有会话目录读取密码验证值，不修改相机系统账号文件。
+电脑客户端用 Paramiko 自动登录，保留主机身份核对；用户不再选择 SSH 密钥。
+Wi-Fi 事件启停不变，已有开发会话仍可使用公钥登录。对上游 Dropbear 2025.89
+的修改记录在 `dev/ssh/password-account.patch`。
+
+恢复页的备用工具生成自动签名的原厂机身程序／资源候选，保留原始更新成员字节，
+更新头为3.02；不调用已撤回的旧 USB 恢复。这不表示更新器信任已恢复或实机
+原厂恢复通过。上方首次授信安装器使用同一应用身份；已有 C2 四库公钥策略
+生成器保留为高级离线工具。真实安装与原厂授信恢复仍待实机验收，单独生成
+策略文件不算安装。
+
+2026-11-03 候选新增 `firmwaresign.py` 与 `dev/firmware/sign.py`：使用自有
+RSA-2048／SHA-256 签名，生成原生 CXD90057 k8 加密分块与 DAT CRC，并用已有
+fwtool 独立解密读回。CLI 与桌面本地构建可选择配对密钥；留空时保留未签名输出。
+私钥留在电脑，不加入固件。
+
+`dev/firmware/trust_image.py` 生成 C2 专用的自有公钥固定摘要覆盖文件：保留原始
+密钥文件哈希与 RSA 验签，逐字节比较全部 20 字节摘要，以选定公钥摘要替代原系统
+信任服务请求。这是明确改变信任策略，不是原厂信任注册，也不是直接返回成功。
+`embed_updater.py` 将重打包 initrd 嵌入已有 C2 FAT12 镜像副本，保留原分配、
+双 FAT、目录及分区尾部；这些开发工具不访问设备。库级 VM 与签名容器通过，
+仍不代表完整更新器启动、首次机身信任安装或实机 SD 更新通过。
+本候选只接受所选自有公钥；返回索尼签名的官方更新还需恢复原厂更新器信任，
+只修改 `dat4` 不会完成这一步。实机信任恢复尚未验收。
+
+另在系统 guest 启动 C2 原始更新器内核与自有公钥策略 SquashFS，使用原厂
+glibc 和库执行 24 组签名用例。该 guest 使用虚拟寄存器映射、初始化黑名单与
+诊断 init，没有启动完整 SD 更新器，也不代表硬件验收。
+
+`dev/firmware/verify_native.py` 提供可复跑的离线解密检查：编译 AArch64 诊断程序，
+通过原始 SD BufferManager、BaseModule／RingBuffer、`execWriteFirm`、RSA 及原生
+分块检查执行完整候选。AES slot-8 服务是明确的软件替身。输出现使用原始
+CommonBufferManager、BaseModule 与 RingBuffer，由独立的只读线程读取并计算摘要。
+只有输出缓冲排空、读取线程正常退出、完整明文大小／摘要、单次结束标志、正确验签与加密阶段，以及
+272 字节 IV／签名余量都符合才通过；进度日志或观察超时不算成功。
+`--mode tamper_cipher --expect-rejection` 检查篡改包在输出前被拒绝。原厂库、密钥、
+生成的 slot fixture 与报告留在本地。这不代表完整 SD Manager、硬件容量或首装
+资格化。Linux 需要 AArch64 GCC 工具链、Clang、qemu-aarch64；Windows 经所选 WSL
+发行版执行。
+
+`dev/firmware/verify_body_loader.py` 另行检查原始 body loader 的头部路径、原生
+头部 CRC、RVchk4PI 与阶段 2 回调，使用原生工作环形缓冲。明确以 2.01 版本及
+标记文件不存在作为测试资料，拒绝挂载请求，并在回调中取消，停在 body 执行之前。
+坏头部 CRC 与截断至 511 字节的输入必须在回调前失败。这是独立头部诊断，不是
+实际 body 写入器或 SD Manager；参数使用上方的 `--updater-root`、`--plaintext`、
+`--workspace` 与 `--qemu`。
+同一工具另用原生工作环形缓冲执行原始 `createBodyImage`，仅将其明确的临时镜像
+及目录路径映射至新工作目录。原始 FileHandler 在此输出用户更新 body 镜像，
+大小与 SHA-256 须符合独立读取的 FDAT 对应片段；不挂载或执行 body 库，也不
+运行设备写入器。
+
+用相同参数运行 `verify_native.py --body-loader` 可将这些阶段接入同一次全长
+解密：原始 body loader 接收解密头部，发出可取消的回调，再由 `createBodyImage`
+从同一输出环读取用户更新文件系统；文件输出限制在新工作目录。工具同时核对
+提取镜像与完整明文，包含上述阶段已消费的头部／镜像字节。回调仍取消实际
+body 执行，版本资料、挂载拒绝与软件 AES 服务仍明确作为测试替身；这不是
+完整 SD Manager、运行 body 库或首次机身信任安装。
+原生诊断程序在下游读取、头部、提取或输出失败时返回非零退出码。若原始 loader
+请求删除失败的临时 body 镜像，诊断程序记录该清理请求被阻止，并保留电脑端文件
+作为失败证据；该文件不能视为验证通过的固件。合成边界用例及电脑端短写／ENOSPC
+故障注入用于检查这些错误路径，不修改原始库。
+
+```sh
+python dev/firmware/verify_native.py \
+  --updater-root /local/original-updater \
+  --policy-library /local/owner-policy/usr/lib/libsdfileinputupdaterapi.so \
+  --candidate /local/candidate.RESEARCH.DAT --public-key /local/owner.public.pem \
+  --plaintext /local/candidate.FDAT.UNSIGNED.bin \
+  --workspace /local/new-validation --qemu /usr/bin/qemu-aarch64
+```
+
+2026-11-01 的本地固件／SSH 候选在独立分支开发。默认界面提供本地构建与 SSH
+资源更新；`--legacy-usb` 才显示保留的 USB 流程。`firmwarelocal.py` 从官方默认资料
+生成计划，通过 `imageedit.py` 与 `dev/firmware/edit_ext2.py` 修改 rootfs／usr／CP
+副本、维护原生校验，并重封装有明确研究文件名的明文 FDAT；可选自有签名在此后
+执行，不宣称原厂机身已经接受。
+
+本地构建必做无障碍语音清理：只删除十种语言的音频 `.bin`，保留索引，并关闭
+语音及其设置入口、将菜单置灰，不删除对焦提示音或快门音。可选竖屏从官方横屏
+`_32` 资源生成三份独立、原 ID 的 `_23` 图像库，不改 AP 布局引用或原生刻度代码。
+在复制的 `/usr` 镜像先删除语音再加入资源，最后执行 e2fsck 与独立读取核对。
+各地区的语音／竖屏布尔默认值明确应用；更新时真实机身设置如何加载仍需验收。
+
+自定义外观可加入预设包或六个中性 ST 槽位。云创固定接口／SSH 选项依赖启用
+自定义外观，界面和后台均检查。`--custom-looks --no-default-looks` 选择中性槽位，
+`--vertical` 添加竖屏。预拍摄支线尚未整合，界面显示不可用状态，`--precapture`
+会在创建输出前拒绝，不能忽略勾选或包装成已经完成；当前候选没有合入该支线。
+
+组合器拒绝后一功能覆盖前一功能已修改的字节，核对最终原生照片段映射后，
+再依据最终程序生成机内接口检查数据。这是修改字节冲突检查，不是完整内存
+所有权或启动证明；各独立功能组合仍需物理验收。
+
+电脑端在 `capacity.private.json` 记录 ext2／FAT12 的块布局、修改前后剩余空间
+及 inode，不扩充分区。格式转换、`.a7look` 解析、竖屏生成和固件组合在电脑完成。
+机内外观请求只使用 1324 字节缓冲，自定义声音才申请最多 50 KiB，并在调用结束
+释放。程序文件及 ELF 加载大小不能当作相机实际内存峰值或 tmpfs 容量。
+
+`sshboot.py` 安装小型 Wi-Fi 事件接收器；`actions/ssh.py` 适配 `dev/ssh/` 已有临时实现。
+`sshupdates.py` 依据本地 `baseline/` 编译，固定构建生成的主机公钥，通过 OpenSSH
+发布 CP／名称／音频文件的精确变更。电脑保留前像和日志；未确认结果停止。
+新启动核对检查磁盘文件，不代表 CP RAM 或照片验收。`updater/dat4` 版本更改
+需要明确生成、再应用，不会自动降级，也不取代签章。
+
+接收器阻塞等待 Linux route-netlink 链路／地址事件：Wi-Fi 接口启用并获得 IPv4
+后才启动 Dropbear，只绑定该地址；关闭 Wi-Fi 或地址变化时停止／重新绑定。
+不轮询、不主动打开 Wi-Fi，不增加唤醒定时器或 SSH 保活。`init2` 只启动小型
+被动接收器，Wi-Fi 关闭时没有 SSH 监听器，支持开机后稍后才开启 Wi-Fi，
+无需手动启动 SSH。静态 AArch64 程序约 35 KiB。隔离网络测试使用真实 AArch64
+Dropbear；实际无线、休眠／唤醒及功耗仍待实机验证。
+启用 SSH 的本地固件现包含按调用运行的 `/usr/bin/a7c2-api`，没有 API 版本字段
+或常驻接口进程。`info` 返回可用槽位、声音范围／操作及原生照片参数支持；
+`task` 以 JSON 返回 `idle`、`pending_reload`、`active` 或 `failed`。`active`
+表示文件更新读回后观察到新的开机身份，不代表实拍／声音效果验收。`/setting`
+仅保留一条小型任务记录，中断写入会报告失败。
+
+`look 槽位 名称` 从标准输入读取固定 1324 字节：1215 字节有符号原生外观表、
+1 字节原生阶段标志、54 个小端 int16 参数（3 个明暗、3 组展开的 3×3 矩阵、
+3 组各 8 个色度参数）。仅表外观的阶段标志和参数填零。机内命令更新所选表／
+原生参数和 68 份名称资源，保留其他槽位。写入位置和名称 ID 依据该固件布局编译
+进机内程序，客户端不提交程序文件或偏移；能力查询可以返回较少槽位或无原生参数。
+
+`sound mechanical|electronic|both on|off` 不需要载荷。`sound ... custom` 接收
+64 字节对齐、最多 51136 字节的原生 filter-0 声音。机内保留另一侧声音、选择
+空闲文件、最后发布 CSV 引用。操作读回修改字节后返回 `pending_reload`，
+下一次更新前需完整重开；临时变更的挂载选项会恢复。
+
+任何资源写入前，机内命令先核对程序长度、CP 段映射、相关外观／原生照片／AP
+代码、全部声音指令窗口及所需空闲块／inode；与保留的桌面 SSH 发布共用目录锁，
+前像读取放在锁内。布局冲突在修改声音、名称或 CP 前拒绝，自定义声音先确认
+CP 布局再发布。中断或写入失败保留阻止重放的状态；不能据此保证任意掉电或
+空间突然耗尽时的整批原子更新。
+
+`cameraapi.py` 生成通用外观载荷并通过 SSH 调用同一命令；`dev/ssh/camera.py`
+提供 info／task／look／sound 电脑端入口，直接接受 `.a7look`，常见音频用已有
+转换器在电脑转换。原 GUI 编辑器及基于构建基线的 SSH 更新继续保留。手机 App
+可以复用同一命令。日常入口选择已有 `.a7look` 文件，精简传输数据在内存生成，
+不落地中间二进制文件，也不需要用户另行转换：
+
+```sh
+python dev/ssh/camera.py --ip CAMERA --host-public host-public.json --workspace new-operation \
+  look 3 "我的外观.a7look"
+```
+
+默认采用文件中的名称字段，可用 `--name` 覆盖机内显示名称。手机 App 读取同一
+`.a7look` 后经 SSH 调用 `/usr/bin/a7c2-api`；上方 1324 字节仅为内部传输编码，
+不是另一种外观文件格式。
+
+机内命令依赖对应本地固件安装的资源钩子，不会自动适配未安装这些组件的任意第三方
+固件。文件／SSH 测试仅离线；实际启动、照片、声音、休眠和首次信任安装仍待验证。
+
+白平衡方法参考
+[Hearts-Ace 的 R5 实现](https://github.com/Hearts-Ace/sony-a7r5-custom-firmware/blob/47f8f022628aef8de382a613ea4d11cd51d0a965/firmware/r5/src/dependencies/colour_fields.json)。
+`looktool/whitebalance.py` 独立适配 C2 2.01 的 97／-1：仅改文件偏移
+`0x14f74e`、`0x14f758` 两处四字节加载指令，保留原厂分流、伴随参数与校准属性。
+原厂指令测试由 `A7C2_FIRMWARE_ROOT` 指向私有官方来源。映像、主机私钥、构建
+固件均为本地资料，不进入源码包或诊断分享包。
+
+本机开发测试统一使用 `E:/CodexData`，设置本进程 TEMP／TMP 和两类 Zig 缓存。
+Guest 控制通道需要 Unix socket，可用存放在 E 盘的 ext4 映像提供，不把测试
+数据重新写回 C／D 盘。
+
+更新于 2026-10-26。续接已有对话时重新读取本节。同一个应用版本号可能对应不同 checkout 和安装包，继续前须核对分支、HEAD、未提交修改及包来源。历史测试结果不能证明相机当前状态。
+
+| 主题 | 已有实现 | 验证界限 |
+| --- | --- | --- |
+| 语音指南空间 | 新一键任务固定执行 `voice_cleanup`：禁用并置灰原生入口，冷重开后核对实际加载保护，再删除十种语言音频 BIN；保留索引 TXT 和原生对焦／快门声音。见 `desktopapp/voicespace.py`、`looktool/voicelock.py`、`looktool/resourceworker.py`。 | 不是删除全部无障碍系统。仅有 `AWAITING_RELOAD` 不证明音频已删，须看具体事务完成字段；新组合流程仍待实机验收。 |
+| 语音恢复 | 用户提供官方 2.01 固件或适用同机原始来源；先完整补回、核对资源，再解除保护。见 `desktopapp/screenreader.py`、`official.py`。 | 不分发原厂语音／固件；空间可能已被竖屏占用，不盲目恢复或重复清理。 |
+| 原生竖屏与独立音效控制 | 独立同 ID 竖屏图像库，机械／电子扬声器音效分别控制。 | 有离线证据，新增组合尚未全部实机验收。 |
+| 启动风险检查 | 原生照片阶段的文件到虚拟地址映射一致性检查，以及加载范围／BSS 检查。 | 合成回归和正常候选离线验证不证明事故根因或启动安全。 |
+
+本机有共享知识库时，按 `AGENTS.md` 读取索引并搜索已有条目，再决定实现，避免重复工作。每个会话在实现、测试、诊断或用户决定有实质进展后，按索引模板写独立的带日期任务条目，注明证据、未知结果与下一步。更新前重读当前文件，保留并行修改，旧结论被替代时明确标记。本地知识库不打包、不公开；长期适用的公开决策同步到本页和更新日志。知识记录不构成相机操作、推送或向其他对话发消息的授权。
+
 ## 范围
 
+- 集成分支：`dev`（由 `develop` 改名）；发布历史保留在 `main`。
 - 相机：只支持 Sony ILCE-7CM2、固件 2.01。
 - 产品：3.0 桌面程序（`desktop.py`），支持 Windows 10／11 x64 和 macOS 14+ Apple Silicon。两个平台共用界面、规划、相机写入和恢复；只有 USB 驱动、提权和存储卷处理因系统而异。
 - 旧版命令行工具（`FL23.cmd`、`lut.py`、`recovery.py`、`shutter.py`、`vertical.py`、`a7look_*.py`、`raw_*.py`）保留给高级用户。它们基于备份的流程，与桌面版不需要备份的直接操作相互独立。
@@ -18,7 +485,7 @@
 | `src/desktopapp/` | 界面（`window.py`、`lookeditor.py`；颜色和状态样式在 `theme.py`）、任务（`jobs.py`）、worker 分发（`worker.py`）、一键安装协调（`allinone.py`）、弹窗文字（`reloadguide.py`、`connectionguide.py`、`lookguide.py`、`completion.py`） |
 | `src/desktopapp/actions/` | `catalog.py`：哪些动作会访问相机、哪些需要确认供电。`look_compiler.py`、`sound.py`：离线转换和声音运行时的适配器 |
 | `src/desktopapp/platforms/` | 系统相关代码：`usb_drivers.py`（Windows 用 libwdi 装 WinUSB、UAC 提权、卸载）、`windows_pnp.py`、`macos_authorization.py`（终端 + sudo）、`macos_media.py`。`drivers.py`、`macadmin.py` 只是兼容别名 |
-| `src/looks/looktool/` | 核心引擎：`direct.py`（不需要备份的事务）、`bundle.py`（组合计划）、`factoryrecover.py`、`compilelook.py`（DCP／CUBE → `.a7look`）、`rawauto.py`／`rawidentity.py`（Lightroom），以及旧版检查点／任务模块 |
+| `src/looks/looktool/` | 核心引擎：`direct.py`（不需要备份的事务）、`bundle.py`（组合计划）、`requestcleanup.py`、`compilelook.py`（DCP／CUBE → `.a7look`）、`rawauto.py`／`rawidentity.py`（Lightroom），以及旧版检查点／任务模块 |
 | `src/camera_runtime/` | USB 服务会话（`transport.py`）、FL23 规划与资源、macOS 主机辅助（`macos_host.py`）、内置 Sony-PMCA-RE |
 | `src/shutter_sound/` | 声音转换／音量、试听、持久安装；`native/` 是 AArch64 相机 worker |
 | `src/vertical/` | 竖屏显示 worker 与竖屏资源（**正在重写**） |
@@ -31,12 +498,14 @@
 | `desktop-assets/`（忽略） | 仅用于发行的输入：默认六款、配对配置库、Windows／macOS 辅助程序 |
 | `build/`、`dist/`（忽略） | 缓存、私有证据和构建产物 |
 
+并非每个保留的源码文件都是桌面功能。独立 CLI 仍使用 `devicejob.py`、`devicecli.py` 和旧 FL23 模块；`fl23_color.py` 用于重建、检查供体彩色资产，`standalone.py` 和 `photobuild.build()` 用于离线重建、核对随包指令模板。原生 worker 源码统一维护在 `src/fl23/native`。某些导入虽未在本模块内使用，却承担对外重导出（`jobs` 动作分类、macOS 卷卸载）或必要的路径初始化（`files_worker` 导入 `candidate`），删除前需核对这些用途。
+
 ## 一次点击如何变成相机写入
 
 1. **界面**（`window.launch`）：写入类动作先弹出供电和机型确认，请求里带上 `power_confirmed=True`。界面线程从不直接调用相机、驱动或原生 worker。
 2. **任务**（`jobs.new_job`）：创建 `<数据目录>/runs/<UTC 时间>-<动作>-<id>/`，写入 `request.private.json`（schema `a7c2-desktop-job/1`）和 `status.private.json`。
 3. **Worker**（`desktop.py --worker`）：每个任务一个新子进程。macOS 上的相机动作会先通过每个任务单独生成的终端 sudo 脚本，以 root 重新运行同一个 worker。Worker 写 `worker.log`，状态依次为 `RUNNING`，然后是带 `result` 的 `SUCCEEDED`，或带 `error`、`error_type` 和完整堆栈的 `FAILED`。
-4. **分发**（`worker.run`）：把动作交给对应引擎，见下方动作表。
+4. **分发**（`worker.run`）：把动作交给对应引擎，见下方动作表。供电确认由实际后端记录，桌面不会测量或输出电量百分比。
 5. **界面收尾**（`window.finished`）：读取状态和 `result.phase`，弹出相应提示：断电重开、资源重开、声音提示或安装完成。
 
 `SUCCEEDED` 只代表 worker 正常返回，下一步要看阶段（phase）：
@@ -57,20 +526,25 @@
 | `setup_all` | `allinone.run` | 一键安装／继续；在同一进程内调用其他动作 |
 | `driver_scan`、`usb_prepare`、`driver_install`、`driver_uninstall`、`mac_unmount` | `platforms.usb_drivers` | 只处理 `054C:0E8A`、`054C:0336`；已有 WinUSB／libusbK／libusb0 绑定直接沿用 |
 | `connect`、`usb_stability` | `devicesession.Camera`、`usbcheck` | 只读 |
-| `direct_factory_reset`（→ `direct_resume_factory`／`direct_verify`） | `looktool.direct` | 内置原厂参考；界面会先识别未完成的事务 |
+| `direct_factory_reset`／`direct_verify` | `looktool.direct` | 用户提供恢复来源；同一个主按钮开始并完成恢复核对 |
 | `direct_fl23_enable`、`direct_fl23_disable` | `looktool.direct` | |
 | `direct_looks_import`（→ `direct_resume_looks`） | `lookbatch` + `looktool.direct`（`install_all`） | `operations`：`slot`、`action=write/restore`、`path`、可选 `name` |
 | `vertical_enable`、`vertical_disable` | `looktool.direct`（持久） | 正在重写 |
 | `sound_on`、`sound_off` | `looktool.direct`（`sound_enable/disable`） | |
+| `sound_mechanical_on`、`sound_mechanical_off` | `looktool.direct`（`sound_mechanical_enable/disable`） | 原生扬声器分段音效；保留电子音效开关及快门设置 |
 | `sound_import`、`sound_volume` | `actions.sound` → `shutter_sound.sound_cli` | 只在电脑上处理，不连接相机 |
 | `sound_audition`、`sound_install`、`sound_verify`、`sound_restore_sound` | `actions.sound` | 相机操作 |
 | `compile_look` | `actions.look_compiler` → `looktool.compilelook` | 离线 |
 | `plugin_install` | `desktopapp.plugins` | 可选 Lightroom 插件，自带 ExifTool |
-| `fl23_*`、`look_*`、`restore*` | 旧版引擎 | 基于备份的旧流程，为兼容历史和命令行保留 |
+| `restore`、`restore_auto`、`restore_verify` | `checkpointjob.Rollback` | 从所选或发现的完整备份恢复（可选） |
 
 替换前端时，只需调用 `jobs.new_job(action, arguments)` 和 `jobs.worker_command(...)`，并按上表理解阶段。参数名与 `Window.common()` 和动作表保持一致。
 
+可选动作 `backup_current` 由 `desktopapp.backup` 执行，只读保存当前项目检查点，也可另存语音包 ZIP，不要求供电写入确认；macOS 仍按相机只读任务取得所需权限。
+
 ## 核心流程
+
+**可选当前备份：**恢复页可生成沿用现有格式的 `checkpoint.private.zip`，保存当前 AP／CP 程序、运行／保存设置和 68 份名称资源；来源标记为 `current-project-backup`，可手动选择还原，但不参与自动寻找最早原始备份。可选 `voice-resources.private.zip` 单独保存二十份语音指南文件，在所选检查点还原需要解除语音关闭限制时作为语音恢复来源。安装不要求先备份；原厂恢复需要用户提供官方／原始来源。语音资源也可由 `desktopapp.screenreader` 从用户自行提供的 2.01 更新文件在本机提取，应用不内置这些数据；语音写回采用 1 MiB 分块写入固定暂存文件，完整校验哈希并逐文件发布后，才解除关闭限制。
 
 **直接事务**（`looktool/direct.py` 的 `DirectJob`）：
 1. `plan()` 是纯函数：把相机当前字节转换为目标字节和要改的设置，每种模式只改自己声明的区域。`bundle.plan()` 把多个模式（FL23、外观、ST 恢复、声音、竖屏）叠成一个计划。
@@ -83,7 +557,7 @@
 - `FINALIZING` 阶段接入声音、安装插件和 RAW 映射，并核对竖屏的持久化状态。
 - 失败后再点继续：写入前就失败的子事务会改用新的 `install-retry-*` 计划；结果不明的则停止，保留现场。
 
-**恢复原厂**：内置参考 `src/looks/assets/factory-regions-2.01.json` 只包含本项目会修改的区域的通用原厂字节，不含完整固件或机身数据。这些区域以外的字节和机身校准都保持不变。中断后从当前字节继续（`factoryrecover.pending`）。
+**恢复原厂**：`src/looks/assets/factory-layout-2.01.json` 只包含位置、长度及原厂内容摘要。`official.prepare_restore` 在打开 USB 前，从用户提供的官方 2.01 文件或可用同机原始备份提取实际恢复字节；本地私有缓存支持重启后的完成核对，不随软件分发。一个主按钮先开始恢复、重启后继续完成。是否补回语音记录在本次事务中，取消补回时保留语音禁用限制；其他字节和机身校准保留。
 
 **USB 服务入口**（`camera_runtime/transport.Session`）：
 1. 检查普通 USB 的产品字符串。
@@ -94,9 +568,19 @@
 
 如果 `0336` 始终没出现、相机回到了 `0E8A`，会冷却 30 秒后重试，最多 3 次。认证没到达 `0336` 时，之后不会再向相机发送任何命令。
 
+Windows 的 `usb_prepare` 在服务认证前完成提权和安装器准备，PnP 到达可在 libusb 尚无可用绑定时触发驱动处理；安装后接口获得独立的新等待窗口，服务出现最多等待 120 秒。普通 `connect` 沿用已有绑定。JSON 发布只重试本机 PermissionError，不重放设备执行；未发布事务进入经过过滤的诊断包，不能当成未写入证明。Issue #44 四个 AP 会话字段只在 4 字节及属性一致时记为遥测，明确指定的目标写入仍优先严格核对。
+
 **声音**（`src/shutter_sound/`）：`media.py`／`native_codec.py` 在电脑上转换音频；`sound_cli.py` 同时驱动桌面版和 `shutter.py` 的流程；`candidate.py`／`boot_sound.py`／`files_worker.py` 构建固定的原生修改。试听和确认记录是可选的，不影响保存。
 
-**外观转换**：`compilelook.py` 解析 DCP 的 LookTable／色调曲线，或 ST／sRGB 的 CUBE，再用 `calibration/a7c2-2.01.virtual.npz` 拟合成机内色表，不需要 Lightroom。支持哪些输入见 [LUT 格式](lut-formats.md)。
+桌面统一保存入口传递 `sound_target=mechanical/electronic/both` 到 `targeted_sound.py`，独立开关保留另一侧状态。按 kind 选行的读取器限制在既有指令范围及 kind1..3；机械使用 kind1 加静音 kind2，电子保持 kind3。合并私有 CSV 时保留另一侧的记录；`sound_probe.c` 返回已加载的完整文件名，避免覆盖仍在使用的文件。无空闲位置时停止并提示先重开。旧偏移调用迁移先撤下旧调用，再发布多行配置；完整文件及读回在新调用前完成。原厂逆向清单含新增窗口。这是离线验证候选，声音、时序与启动仍待真机验收。
+
+**11月22日旧拟合管线**：`compilelook.py`评估DCP／CUBE，`compilehybrid.py`调用`looktool/r5fit`。当时采用作者2026-11-22便携源码及11月18日非线性响应；正式配置的12起点／2000评估、8自适应轮、3遍整数扫描、目标polish参数2、最多5轮目标网格和3轮Gamma冻结叠加与包内一致；参数的实际作用以原函数为准。旧去毛刺默认关闭。保留C2参数构造、原数据划分和Gamma可接受性投影；不引入上游摘要门禁。输入范围见[LUT格式](lut-formats.md)。
+
+算子系数与作者提供的11月18日JSON相同；latent模型、整数微调、目标网格和主要原生优化函数均已逐函数对照便携包。既有C2 2899点开发探针的train／valid／historical-test浮点RGB8 RMSE由旧Hybrid的0.714／1.007／1.624降为0.551／0.593／0.623。这不等于重新标定C2、独立新场景测试或相机验收。共享云端和当前Windows运行目录已更新，旧分发压缩包尚未重建。
+
+语音空间由 `voicelock.py` 限制原生支持入口和三个普通设置写入口，共四个既有指令窗口、20 字节；另将五个语音菜单各十三个模式状态从 1 改为 2，共 130 字节数据，保留原生非零可见判断，但不满足等于 1 的可选判断。设置与触发值保存为关闭。新一键安装固定先执行 `voice_cleanup`，首次写入限制后要求断电重开，后续请求必须通过实际加载指令核对，才删除十种语言的音频 BIN，保留索引。`resource_files.c` 只接受编译时固定路径和当前读取的大小／哈希，每次操作后将 `/usr` 重新挂为只读，文件完整哈希一致后才发布恢复结果。原生仿真使用合成文件系统，不证明真实掉电后的文件系统行为或启动安全。原厂恢复将快门设为机械、静音模式关闭、恢复原生声音路径，重开核对后才清理私有音效文件并完成；保留对焦提示音设置。 原厂资源不要求 root 属主，仍须满足普通文件、单硬链接及绑定的大小／哈希。资源和暂存文件使用 AArch64 NOFOLLOW／CLOEXEC，目录同步使用目标 O_DIRECTORY（0x4000），不能误用 O_DIRECT（0x10000）。
+
+原生竖屏候选由 `desktopapp.vertical_native` 先沿用既有逆向撤回旧补偿并要求冷重开。`verticaltool.nativeportrait` 使用当前机身图片与既有竖屏绘图生成独立 `_23` 库，保留原图像 ID，`_32` 横屏原库与 AP 绘制代码保持原生。`resourceworker` 只接受三个固定图形库路径，复制前检查已加载的原生 AP 窗口；原生 worker 在资源修改时还要求运行中竖屏开关为 OFF。`verticalpersist.Stage` 可识别完整或部分本项目文件，用于关闭／恢复；原厂恢复语音前先回收这些文件。需要撤回旧补偿并重开的新一键安装，在程序／LUT 阶段前暂停。当前只通过离线验证，尚未真机验收。
 
 ## 构建与测试
 
@@ -137,3 +621,7 @@ CI：`.github/workflows/desktop-preview.yml` 在原生 Windows 和 `macos-15` ru
 | `AGENTS.md` | AI：不能违反的规则 |
 
 每篇英文文档在同一路径下都有对应的简体中文版，两者保持同步。不要再新增按功能拆分的说明或研究笔记：直接读代码，把决策记在更新日志或提交说明里。历史文档保留在 git 历史中。
+
+## 源码与构建输入
+
+云形标志及 Windows ICO 位于已跟踪的 `src/desktopapp/assets`，README 图片位于 `docs/assets`，版本保持3.10。完整外观库不放Git。3.10源码构建另需单独提供的C2 `src/looks/looktool/r5fit/data/context.npz`、`inputs.npz`、`src/looks/assets/cube-dcp-base.dcp`及默认六款／配对库构建资源，按原相对路径放置；这些是构建输入，不是固件镜像或哈希白名单。v3.0.3资源包不含新版Hybrid输入，须使用匹配3.10的构建资源。

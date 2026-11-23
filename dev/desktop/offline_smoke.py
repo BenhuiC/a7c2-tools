@@ -4,29 +4,94 @@ from pathlib import Path
 import tempfile
 
 
+def check_firmware_packaging():
+    """Exercise the packaged WBI recipe and exact TAR replacement machinery."""
+    import io
+    import tarfile
+    import zlib
+    from desktopapp import firmwarearchive, firmwarelocal, firmwarewbi
+    with tempfile.TemporaryDirectory(prefix='a7c2-wbi-packaging-') as temporary:
+        folder=Path(temporary)
+        original=b'WBI2'+bytes(range(256))*4
+        source=folder/'source.img';source.write_bytes(original)
+        edited=folder/'edited.img';prepared=firmwarewbi.invalidate_packaged_wbi(source,edited)
+        assert edited.read_bytes()==b'WBI3'+original[4:] and prepared['changed_offsets']==[3]
+        manifest=f'0,{zlib.crc32(original):08x},{len(original):08x},000001a4,0,0,root,root,-1,-1,dev/nflasha5,\n'.encode()
+        revised,changed=firmwarelocal.rewrite_sum(manifest,{firmwarewbi.IMAGE_NAME:edited})
+        assert changed==[firmwarewbi.IMAGE_NAME]
+        sums=folder/'part_image.sum';sums.write_bytes(revised)
+        raw=io.BytesIO()
+        with tarfile.open(fileobj=raw,mode='w',format=tarfile.GNU_FORMAT)as archive:
+            for name,payload in [(firmwarewbi.IMAGE_NAME,original),(firmwarewbi.SUM_NAME,manifest)]:
+                member=tarfile.TarInfo(name);member.size=len(payload)
+                member.uid=123;member.gid=456;member.mtime=1700000000
+                archive.addfile(member,io.BytesIO(payload))
+        original_tar=raw.getvalue()+b'original TAR trailer retained\xff'
+        output=folder/'output.tar'
+        scope=firmwarearchive.replace_members(io.BytesIO(original_tar),
+            {firmwarewbi.IMAGE_NAME:edited,firmwarewbi.SUM_NAME:sums},output)
+        assert scope['original_headers_padding_trailer_preserved']
+        with tarfile.open(output,mode='r:')as archive:
+            final=firmwarewbi.audit_packaged_wbi(archive,source)
+            offset=archive.getmember(firmwarewbi.IMAGE_NAME).offset_data
+        corrupted=bytearray(output.read_bytes());corrupted[offset:offset+len(original)]=bytes(len(original))
+        with tarfile.open(fileobj=io.BytesIO(corrupted),mode='r:')as archive:
+            try:firmwarewbi.audit_packaged_wbi(archive,source)
+            except ValueError:pass
+            else:raise AssertionError('Frozen package accepted the withdrawn blank WBI method')
+    return dict(R5_one_byte_recipe='passed',final_archive_WBI_CRC='passed',
+                original_TAR_bytes='passed',blank_WBI_rejected=True,camera_io=False)
+
+
 def check_dcp_conversion(selected):
-    """Exercise shipped profiles and the real fitting pipeline in the package."""
+    """Check packaged targets, current native inference and document export.
+
+    Full Hybrid optimization is intentionally separate from the packaging
+    smoke test; do not label a structural export as a newly fitted look.
+    """
+    import copy,json
     import numpy as np
-    from looktool import compilelook, lookfile, rawidentity
+    from looktool import compilelook,lookfile,rawidentity,iconfile,r5fit
     names=[]
-    with tempfile.TemporaryDirectory(prefix='a7c2-dcp-smoke-') as temporary:
+    with tempfile.TemporaryDirectory(prefix='a7c2-dcp-smoke-')as temporary:
         folder=Path(temporary)
         for row in selected:
             source=folder/('slot%d.dcp'%row['slot'])
             source.write_bytes(rawidentity.source_bytes(row['document']['raw_profile']))
             target,report,info=compilelook.dcp_targets(np.array([[.1,.2,.3],[.8,.6,.4],[.3,.3,.3]]),source)
-            assert target.shape==(3,3) and np.isfinite(target).all()
-            assert not report['Lightroom_reference_used'] and not report['full_adobe_renderer']
+            assert target.shape==(3,3)and np.isfinite(target).all()
+            assert not report['Lightroom_reference_used']and not report['full_adobe_renderer']
             names.append(info['profile'])
-        output=folder/'Astia.a7look'
-        assert compilelook.main([str(folder/'slot4.dcp'),'--name','Offline package check',
-            '--output',str(output),'--passes','1','--evaluations','20','--extra-colors','32'])==0
-        document=lookfile.read(output)
-        assert len(lookfile.writer_document(document))==1215
-        assert document['native_photo']['runtime_basis']
-        assert document['validation']['metrics']['Lightroom_reference_used'] is False
-    return dict(profiles_evaluated=names,real_fit='passed',Lightroom_used=False,
-                reduced_budget=True,physical_color_validated=False,camera_io=False)
+        document=copy.deepcopy(selected[3]['document'])
+        for title,icon in [('plain',None),('four-character',iconfile.from_text('F400'))]:
+            value=copy.deepcopy(document);value.pop('menu_icon',None)
+            if icon:value['menu_icon']=icon
+            path=folder/(title+'.a7look');path.write_text(json.dumps(value),encoding='utf-8')
+            actual=lookfile.read(path)
+            assert actual['schema']==lookfile.FULL_SCHEMA and actual['edit_native']==document['edit_native']
+            assert len(lookfile.writer_document(actual))==1215
+            assert rawidentity.source_bytes(actual['raw_profile'])==rawidentity.source_bytes(document['raw_profile'])
+    return dict(profiles_evaluated=names,numerical_inference=r5fit.preflight(),
+        structural_export_roundtrip=True,real_optimizer_run=False,
+        formal_fit_evidence='separate full-budget library run',physical_color_validated=False,camera_io=False)
+
+
+def check_audio_preview(path):
+    """Load the packaged preview backend without playing on the user's speakers."""
+    from PySide6.QtCore import QCoreApplication,QEventLoop,QTimer,QUrl
+    from PySide6.QtMultimedia import QAudioOutput,QMediaPlayer
+    app=QCoreApplication.instance() or QCoreApplication([])
+    player=QMediaPlayer();loop=QEventLoop()
+    player.mediaStatusChanged.connect(lambda status:loop.quit() if status in (
+        QMediaPlayer.MediaStatus.LoadedMedia,QMediaPlayer.MediaStatus.InvalidMedia) else None)
+    player.errorOccurred.connect(lambda *args:loop.quit())
+    QTimer.singleShot(5000,loop.quit)
+    player.setSource(QUrl.fromLocalFile(str(path)))
+    loop.exec()
+    assert player.error()==QMediaPlayer.Error.NoError,player.errorString()
+    assert player.mediaStatus()==QMediaPlayer.MediaStatus.LoadedMedia and player.duration()>0
+    player.setSource(QUrl())
+    return dict(backend_load='passed',speaker_playback=False)
 
 
 def check_audio_conversion():
@@ -88,6 +153,7 @@ def check_audio_conversion():
         assert (workspace/'conversion.private.json').is_file()
         results['unresolved_camera_task_does_not_block_conversion']='passed'
         initial=Path(sound_cli.selected_conversion(workspace,None))
+        results['computer_preview']=check_audio_preview(initial/'preview.private.wav')
         original_payload=(initial/'custom-native.private.bin').read_bytes()
         louder=sound_cli.volume_audio(workspace,decibels=3)
         assert louder['volume_gain_db']==3 and louder['camera_io'] is False
@@ -141,6 +207,17 @@ def check_audio_conversion():
 
 
 def run():
+    import json
+    from desktopapp.profilelibrary import location
+    library=location()
+    profiles=json.loads((library/'catalog.json').read_text(encoding='utf-8'))['profiles']
+    assert profiles and all((library/row[k]).is_file() for row in profiles for k in ('dcp','a7look'))
+    # Check the lazy password-SSH dependencies in the frozen app without sockets.
+    import paramiko
+    from Cryptodome.PublicKey import ECC
+    raw=ECC.generate(curve='Ed25519').public_key().export_key(format='raw')
+    blob=b'\0\0\0\x0bssh-ed25519\0\0\0\x20'+raw
+    assert paramiko.Ed25519Key(data=blob).asbytes()==blob
     import usb.core
     def no_device(*args,**kwargs):
         raise AssertionError('Packaged offline self-test must never enumerate physical USB')
@@ -148,6 +225,17 @@ def run():
     from desktopapp.worker import setup_runtime
     from desktopapp.paths import ROOT
     setup_runtime()
+    from looktool import iconfile
+    from desktopapp.iconeditor import MenuIconDialog
+    icon=iconfile.from_text('Po')
+    assert len(iconfile.mask(icon))==26*19
+    from looktool import fixedlooks
+    from desktopapp import menuicons
+    assert len(fixedlooks.asset()['templates'])==64
+    assert len(fixedlooks.asset()['read_only'])==5
+    compact=menuicons.paint(bytes(3840),icon,True,compact=True)
+    assert menuicons.decode(menuicons.vertical_modules()[1].compress(compact),3840)==compact
+    assert MenuIconDialog is not None
     from desktopapp import reloadguide
     from desktopapp import connectionguide
     from desktopapp.exiftool import ensure
@@ -171,6 +259,25 @@ def run():
     import boot_sound
     assert boot_sound.expected_windows()[-1][0]==boot_sound.BOOT
     importlib.import_module('desktopapp.allinone')
+    from desktopapp import trustinstall,trustworker,updaterimage
+    from desktopapp.actions.catalog import CAMERA_ACTIONS,POWER_ACTIONS
+    assert {'firmware_trust_install','firmware_trust_verify','firmware_trust_restore'}<=CAMERA_ACTIONS
+    assert 'firmware_trust_verify' not in POWER_ACTIONS
+    with tempfile.TemporaryDirectory(prefix='a7c2-trust-smoke-') as temporary:
+        folder=Path(temporary)
+        for mode in (0,2):
+            data=bytes(16384) if mode else b''
+            compiled=trustworker.build(folder/str(mode),mode,512,16384,data,data)
+            assert compiled.stat().st_size<=65536
+    import os
+    trust_image_check='not_requested'
+    if os.environ.get('A7C2_OFFLINE_TRUST_IMAGE'):
+        from desktopapp.identity import signing_paths
+        original=Path(os.environ['A7C2_OFFLINE_TRUST_IMAGE']).read_bytes()
+        target,image_report=updaterimage.build(original,signing_paths()[1].read_bytes())
+        assert len(target)==len(original) and image_report['filesystem_allocations_preserved']
+        trust_image_check=dict(passed=True,changed_windows=len(list(updaterimage.write_plan(original,original,target))),
+            private_key_in_camera_files=False,camera_io=False)
     from desktopapp import allinone, presets, lookbatch, reviewnames, completion
     from looktool import bundle
     from looktool import device_layout
@@ -184,29 +291,25 @@ def run():
     assert mixed['reset_slots']==[4] and [r['slot'] for r in mixed['looks']]==[2]
     assert not mixed['fl23'] and not mixed['sound'] and not mixed['vertical_persistent']
     importlib.import_module('desktopapp.lookeditor')
-    from looktool import factoryrecover
-    previous_pending=factoryrecover.pending
-    try:
-        factoryrecover.pending=lambda *args,**kwargs:None
-        with tempfile.TemporaryDirectory() as temporary:
-            calls=[]
-            def simulated(action,args,folder):
-                calls.append(action)
-                if action == 'direct_install_all':
-                    assert args['options']['vertical_persistent'] is True
-                    _, rows = bundle.documents(args['options'])
-                    assert [r['name'] for r in rows] == list(presets.NAMES)
-                    assert all(Path(r['path']).parent.resolve() == (Path(temporary) / 'inputs').resolve() for r in rows)
-                return {'phase':'LOADED','mode':'install_all','workspace':args.get('workspace',''),
-                    'vertical_result':dict(persistent=True,loaded_verified=True,saved='ON',running='ON',alias_count=3)}
-            result=allinone.run(dict(workspace=temporary,firmware='2.01',power_confirmed=True,
-                options=dict(fl23=False,sound=False,vertical=True,plugin=False,preset_pack=presets.PACK)),dispatch=simulated)
-            assert result['phase']=='COMPLETE' and not result['physical_checks_accepted']
-            assert calls==['usb_prepare','vertical_enable','direct_install_all']
-            assert '电子快门声：本次未选择' in completion.text(result)
-            assert completion.console_summary(result)['phase']=='COMPLETE'
-            assert '无需每次连接电脑' in completion.text(result)
-    finally:factoryrecover.pending=previous_pending
+    with tempfile.TemporaryDirectory() as temporary:
+        calls=[]
+        def simulated(action,args,folder):
+            calls.append(action)
+            if action=='voice_cleanup':return dict(voice_audio_removed=True,voice_setting_locked_off=True,voice_menu_flags_verified=True)
+            if action == 'direct_install_all':
+                assert args['options']['vertical_persistent'] is True
+                _, rows = bundle.documents(args['options'])
+                assert [r['name'] for r in rows] == list(presets.NAMES)
+                assert all(Path(r['path']).parent.resolve() == (Path(temporary) / 'inputs').resolve() for r in rows)
+            return {'phase':'LOADED','mode':'install_all','workspace':args.get('workspace',''),
+                'vertical_result':dict(persistent=True,loaded_verified=True,saved='ON',running='ON',alias_count=3)}
+        result=allinone.run(dict(workspace=temporary,firmware='2.01',power_confirmed=True,
+            options=dict(fl23=False,sound=False,vertical=True,plugin=False,preset_pack=presets.PACK)),dispatch=simulated)
+        assert result['phase']=='COMPLETE' and not result['physical_checks_accepted']
+        assert calls==['usb_prepare','voice_cleanup','vertical_enable','direct_install_all']
+        assert '电子快门声：本次未选择' in completion.text(result)
+        assert completion.console_summary(result)['phase']=='COMPLETE'
+        assert '无需每次连接电脑' in completion.text(result)
     from looktool import nativebuild, checkpointworker, device_layout, resources, nameworker
     from looktool.devicesession import modules
     transport, core = modules()
@@ -222,17 +325,22 @@ def run():
     assert struct.unpack_from('<II',gamma,0xe78+20*8)==(49,47)
     assert device_layout.fl23_previous_values(0x1100b80)
     assert (ROOT / 'src/looks/assets/native-photo-v2.json').is_file()
-    for name in ('compilelook', 'lookfile', 'rawauto', 'rawprofiles', 'checkpointjob', 'devicejob', 'direct', 'directresume', 'factoryrecover', 'bundle','namespause','verticalpersist'):
+    for name in ('compilelook', 'lookfile', 'rawauto', 'rawprofiles', 'checkpointjob', 'devicejob', 'direct', 'requestcleanup', 'bundle','namespause','verticalpersist'):
         importlib.import_module('looktool.' + name)
     import sys
     sys.path.insert(0, str(ROOT / 'src/desktopapp/vendor'))
     from fwtool.sony import dat, fdat
     from fwtool.archive import ext2, fat
-    from desktopapp.official import builtin
-    assert builtin()['version'] == '2.01'
+    from desktopapp.official import layout
+    assert layout()['version'] == '2.01'
     sys.path[:0] = [str(ROOT / 'src/vertical'), str(ROOT / 'src/shutter_sound')]
     importlib.import_module('verticaltool.device')
     importlib.import_module('looktool.portraitjob')
+    importlib.import_module('verticaltool.nativeportrait')
+    importlib.import_module('desktopapp.vertical_native')
+    from desktopapp.disclaimer import terms_text
+    assert 'DMCA' in terms_text() and 'LICENSE' in terms_text()
+    assert '不撤回' not in terms_text() and '从未授权任何人' in terms_text()
     from verticaltool import imagebank, portraitbank, portraitworker
     import struct
     with tempfile.TemporaryDirectory(prefix='a7c2-portrait-smoke-') as temporary:
@@ -262,6 +370,7 @@ def run():
         assert Path(frames['path']).stat().st_size<=65536
     assert (ROOT / 'src/vertical/assets/aliases_recovery.so').read_bytes()[:4] == b'\x7fELF'
     importlib.import_module('sound_cli')
+    firmware_packaging = check_firmware_packaging()
     audio_conversion = check_audio_conversion()
     dcp_conversion = check_dcp_conversion(selected)
     import numpy as np
@@ -288,10 +397,14 @@ def run():
         _,forward=nameworker.prepare({n:original for n in nameworker.filenames()},{1:'Smoke'},bytes(16),
             '0123456789abcdef',Path(folder)/'forward',byte_only=True)
         assert forward['stream_install'] and Path(forward['path']).read_bytes()[:4]==b'\x7fELF'
-    return {'camera_io': False, 'project_imports': 'passed', 'bundled_exiftool':exif_result.stdout.strip(), 'assets': 'passed', 'builtin_factory_reference': 'passed',
+    return {'camera_io': False, 'firmware_packaging':firmware_packaging, 'embedded_menu_icon':'passed',
+            'fixed_preset_recipe_asset':'passed','compact_creative_icon_codec':'passed',
+            'first_trust_worker_compile':'passed','first_trust_image':trust_image_check,
+            'profile_library_directory':'passed','profile_library_pairs':len(profiles),
+            'project_imports': 'passed', 'bundled_exiftool':exif_result.stdout.strip(), 'assets': 'passed', 'builtin_factory_reference': 'passed',
             'native_cross_compile': 'passed', 'native_assembler_disassembler':'passed',
             'one_click_offline_sequence':'passed','look_batch_defaults':'passed','streaming_names_compile':'passed',
             'bundled_six_looks':list(presets.NAMES),'fl23_pr6_movie_routes':'passed',
             'completion_summary':'passed','persistent_vertical_plan':'passed','portrait_frames_compile_and_inverse':'passed',
             'audio_conversion':audio_conversion,'standalone_dcp_conversion':dcp_conversion,
-            'sound_install_byte_planner':'passed','numpy': np.__version__}
+            'sound_install_byte_planner':'passed','password_ssh_dependencies':'passed','numpy': np.__version__}

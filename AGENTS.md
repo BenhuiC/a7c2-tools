@@ -6,13 +6,36 @@ the user's explicit instructions override these rules.
 
 No Claude or additional agents without explicit user authorization.
 
+## Shared project knowledge and existing chats
+
+- Before starting or resuming work, after context compaction, and before changing
+  an existing feature, re-read the current-state section of the development guide
+  and inspect the actual branch, HEAD and working-tree changes. Do not rely only
+  on a previous chat summary or a version label shared by different builds.
+- In the owner's multi-checkout workspace, also read the local shared knowledge
+  index at `../../knowledge/INDEX.md` when present (relative to this checkout).
+  Search its `entries/` for the current topic. This is local context, not a
+  publication asset or authority to access a device.
+- Each chat may and should extend that knowledge base under its template:
+  use a separate dated entry for its task, cite source/transaction/test evidence,
+  distinguish implementation, package, commit/push and physical acceptance, and
+  record failures and next steps before finishing. Re-read before updating;
+  preserve other chats' changes and superseded evidence.
+- Keep reusable public decisions in the existing bilingual development guide
+  and changelog. Never copy the private workspace index or its local paths into
+  the public repository or packages. Existing chats need an explicit context
+  refresh; do not claim that editing an instruction file updates their context.
+- Voice-audio cleanup and its disable/menu guards already exist. Read the guide
+  before proposing their implementation or restoration; a cleanup policy in
+  source is not evidence that a particular body has completed deletion.
+
 ## Branches and releases
 
 - The owner approved merging the Recovery/slot-restoration fixes and the
   service-first USB fix into `main` on October 20, 2026, and updating the existing
   v2.2-preview.1 commit/release. Develop future changes on feature branches;
   further release rewrites need authorization.
-- Version 3.0 is the desktop app (`desktop.py`). On October 23 the owner accepted
+- The current development version stays 3.10. Windows bundles only the six defaults; the complete 41-pair cloud pack is separate. Do not increment the version for packaging or branding changes. Version 3.0 introduced the desktop app (`desktop.py`). On October 23 the owner accepted
   the cp-restore.6 test build and authorized integration into `main` and release
   packaging. Record physical test coverage separately from offline/CI checks.
 
@@ -25,11 +48,15 @@ No Claude or additional agents without explicit user authorization.
   requirements into these GUI actions; ST reset does not recover former recipes.
 - Historical backup restoration and the existing CLI behavior remain separate,
   optional paths with their own contracts.
-- The built-in factory reference holds generic original Sony bytes only for
-  supported project regions, with no body calibration or full firmware.
+- Factory recovery sources come from the user's official 2.01 firmware or a
+  usable same-body original backup. Ship only the region layout/digests, not
+  original recovery bytes. New one-click installs always include voice cleanup;
+  only the full recovery flow offers optional voice restoration.
 - Preserve current calibration, unselected slots and their titles, and unrelated
-  settings. Every imported slot uses ST in saved and runtime bindings; the base
-  picker stays editable, so never claim a hard lock.
+  settings. Legacy imports provision ST with an editable base picker. Fixed
+  preset firmware constrains selected bases in the native model and routes them
+  directly to their eight parameters. Compiled behavior is separate from
+  physical menu, recall and playback acceptance.
 
 ## Camera safety
 

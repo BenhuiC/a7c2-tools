@@ -28,11 +28,20 @@ class CubeCompileTests(unittest.TestCase):
         self.assertFalse(report['Lightroom_reference_used'])
         self.assertFalse(report['automatic_Adobe_profile_generated'])
 
-    def test_log_or_other_input_is_not_assumed_to_be_ST(self):
+    def test_unknown_input_is_not_assumed_to_be_ST(self):
         path=self.cube('identity.cube',lambda rgb:rgb)
-        for space,bridge in [(None,None),('f-log',None),('sony-st-srgb',path)]:
-            with self.assertRaisesRegex(ValueError,'explicit bridge'):
+        for space,bridge in [(None,None),('unknown-space',None)]:
+            with self.assertRaises(ValueError):
                 cube_targets(np.array([[.1,.2,.3]]),path,space,bridge)
+
+    def test_known_log_input_is_converted_and_same_log_output_roundtrips(self):
+        from looktool.lutspaces import convert
+        path=self.cube('identity.cube',lambda rgb:rgb)
+        source=np.array([[.1,.2,.3]])
+        changed,_=cube_targets(source,path,'slog3-sgamut3cine')
+        np.testing.assert_allclose(changed,convert(source,'srgb','slog3-sgamut3cine'))
+        result,_=cube_targets(source,path,'slog3-sgamut3cine',output_space='slog3-sgamut3cine')
+        np.testing.assert_allclose(result,source)
 
     def test_explicit_bridge_is_applied_before_the_look(self):
         bridge=self.cube('bridge.cube',lambda rgb:rgb*.5)
@@ -48,24 +57,18 @@ class CubeCompileTests(unittest.TestCase):
         self.assertEqual(report['clipped_output_components'],2)
 
     def test_long_fit_uses_the_frozen_paired_DCP_after_original_changes(self):
-        from test_photoformat import curve
         from test_rawprofiles import profile
         from looktool.rawidentity import source_bytes
+        from looktool import r5fit
+        from hybrid_compiler_fixture import result
         source=self.cube('source.cube',lambda rgb:rgb)
         paired=self.root/'source.dcp';original=profile('Original');paired.write_bytes(original)
-        calibration=self.root/'model.npz';calibration.write_bytes(b'fixture')
-        bank=photoformat.PhotoBank(curve(),curve(),bytes(576),bytes(64))
-        model=SimpleNamespace(metadata={'physical_scope':'Synthetic fixture'},
-            arrays={'baseline_bank':np.frombuffer(bank.pack(),dtype=np.uint8)},
-            virtual_samples=lambda count:(np.array([[.2,.3,.4]]),np.array([[.2,.3,.4]])))
         def long_fit(*args,**kwargs):
             paired.write_bytes(profile('Changed while fitting'))
-            return np.zeros((405,3)),dict(native_controls=[0]*17,
-                final_optimizer=dict(optimizer_converged=True))
+            return result()
         output=self.root/'compiled.a7look'
-        with patch.object(measuredmodel,'Response',return_value=model),patch.object(compilelook,'fit',side_effect=long_fit):
-            code=compilelook.main([str(source),'--input-space','sony-st-srgb','--raw-dcp',str(paired),
-                '--name','Fixture','--output',str(output),'--calibration',str(calibration),'--config',str(self.root/'none.json')])
+        with patch.object(r5fit,'fit',side_effect=long_fit):
+            code=compilelook.main([str(source),'--input-space','sony-st-srgb','--raw-dcp',str(paired),'--name','Fixture','--output',str(output)])
         self.assertEqual(code,0)
         self.assertEqual(source_bytes(lookfile.read(output)['raw_profile']),original)
         self.assertNotEqual(paired.read_bytes(),original)

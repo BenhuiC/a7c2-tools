@@ -9,12 +9,13 @@ from pathlib import Path
 from . import native
 
 SCHEMA = 'a7c2-creative-look/1'
+FULL_SCHEMA = 'a7c2-creative-look/2'
 TARGET = {'model': 'ILCE-7CM2', 'firmware': '2.01'}
 FORMAT = 'native-5x9x9-s7-planar'
 
 
 def validate(document):
-    if document.get('schema') != SCHEMA or document.get('table_format') != FORMAT:
+    if document.get('schema') not in (SCHEMA, FULL_SCHEMA) or document.get('table_format') != FORMAT:
         raise ValueError('Unknown compiled creative-look format')
     if document.get('target') != TARGET or document.get('base') != 'ST':
         raise ValueError('Compiled look targets a different camera/version/base')
@@ -27,12 +28,23 @@ def validate(document):
         raise ValueError('Invalid compiled correction table') from exc
     native.decode(table)
     stages = document.get('native_photo')
+    full = document.get('edit_native')
+    if document.get('schema') == FULL_SCHEMA:
+        from .editrecipe import validate as validate_edit
+        validate_edit(full)
+        if stages is not None:
+            raise ValueError('Full Edit fit and legacy native photo stages cannot be combined')
+    elif full is not None:
+        raise ValueError('Full Edit parameters require creative-look/2')
     if stages is not None:
         from .photoformat import validate_delta
         validate_delta(stages)
     if document.get('raw_profile') is not None:
         from .rawidentity import source_bytes
         source_bytes(document['raw_profile'])
+    if document.get('menu_icon') is not None:
+        from .iconfile import mask
+        mask(document['menu_icon'])
     return table
 
 
@@ -46,6 +58,9 @@ def read(path):
 
 def writer_table(document):
     table = validate(document)
+    _require_backend(document)
+    from .iconfile import reject_device_import
+    reject_device_import(document)
     if document.get('native_photo') is not None:
         raise ValueError('This writer does not yet install native curve/matrix/chroma stages; no camera connection was started')
     return table
@@ -54,6 +69,7 @@ def writer_table(document):
 def writer_document(document):
     """Accept supported four-stage files without silently omitting a stage."""
     table=validate(document)
+    # Full Edit files use photofull's independent dense-record backend.
     if document.get('native_photo') is not None:
         from .photobasis import SCHEMA as basis_schema
         if document['native_photo'].get('runtime_basis',{}).get('schema')!=basis_schema:
@@ -61,9 +77,14 @@ def writer_document(document):
     return table
 
 
+def _require_backend(document):
+    if document.get('edit_native') is not None:
+        raise ValueError('This A7Look requires the full C2 native runtime; the old 54-coefficient backend cannot install it; no camera connection was started')
+
+
 def write(path, name, table, *, method, attribution, metrics=None, native_photo=None,
-          physical_validation=False, raw_profile=None,source_reference=None):
-    document = {'schema': SCHEMA, 'name': name, 'target': TARGET, 'base': 'ST',
+          physical_validation=False, raw_profile=None,source_reference=None,menu_icon=None,edit_native=None):
+    document = {'schema': FULL_SCHEMA if edit_native is not None else SCHEMA, 'name': name, 'target': TARGET, 'base': 'ST',
                 'table_format': FORMAT, 'table_base64': base64.b64encode(table).decode('ascii'),
                 'method': method, 'attribution': attribution,
                 'validation': {'camera_photos_and_preview_verified': physical_validation,
@@ -72,21 +93,26 @@ def write(path, name, table, *, method, attribution, metrics=None, native_photo=
         document['native_photo'] = native_photo
     if raw_profile is not None:document['raw_profile']=raw_profile
     if source_reference is not None:document['source_reference']=source_reference
+    if menu_icon is not None:document['menu_icon']=menu_icon
+    if edit_native is not None:document['edit_native']=edit_native
     validate(document)
+    content=json.dumps(document, ensure_ascii=False, allow_nan=False, indent=2)+'\n'
     # Never overwrite a previous fitted look implicitly.
     with Path(path).open('x', encoding='utf-8', newline='\n') as stream:
-        json.dump(document, stream, ensure_ascii=False, allow_nan=False, indent=2)
-        stream.write('\n')
+        stream.write(content)
     return document
 
 
 def inventory(document):
     table = validate(document)
     result={k:v for k,v in document.items() if k not in ('table_base64','raw_profile','source_reference')}
+    if document.get('menu_icon') is not None:
+        result['menu_icon']={k:v for k,v in document['menu_icon'].items() if k!='png_base64'}
+        result['menu_icon'].update(embedded=True,pixels=[26,19],scope='menu-only')
     if document.get('raw_profile'):
         result['raw_profile']={k:v for k,v in document['raw_profile'].items() if k!='dcp_base64'}
     if document.get('source_reference'):
         result['source_reference']={k:v for k,v in document['source_reference'].items() if not k.endswith('_base64')}
     return result | {
         'table_bytes': len(table), 'needs_native_photo_backend': document.get('native_photo') is not None,
-        'camera_io': False}
+        'needs_full_native_runtime': document.get('edit_native') is not None, 'camera_io': False}

@@ -25,9 +25,11 @@ class CandidateTests(unittest.TestCase):
         ap[:4] = b'\x7fELF'
         ap[0x286cde8:0x286cdfc] = bytes.fromhex('20af029000601391008c409100800391c0035fd6')
         ap[0x2885488:0x288549c] = bytes.fromhex('40ae02f0006013910004429100002f91c0035fd6')
-        cp = bytearray(max(at+len(raw) for at,raw in candidate.CP_GUARDS)+100)
+        cp = bytearray(max([at+len(raw) for at,raw in candidate.CP_GUARDS]+
+                           [at+len(old) for at,old,_ in candidate.WINDOWS])+100)
         cp[candidate.SELECTOR_TABLE:candidate.SELECTOR_TABLE+5] = candidate.TABLE_BEFORE
         for at, raw in candidate.CP_GUARDS:cp[at:at+len(raw)] = raw
+        for at, old, new in candidate.WINDOWS:cp[at:at+len(old)] = old
         cp[candidate.START:candidate.START + len(candidate.CONTEXT)] = candidate.CONTEXT
         cls.ap, cls.cp = bytes(ap), bytes(cp)
 

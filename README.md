@@ -4,17 +4,23 @@
 
 **English** · [简体中文](README.zh-CN.md)
 
-## Current branches and delivery · 2026-11-11
+## 3.10 package update · 2026-11-23
+
+The 3.10 prerelease includes the current Windows and Apple Silicon Mac tools, six default icon-bearing looks, current LUT/DCP conversion, native firmware-image editing and the unified camera API. macOS has no driver-installation step. Custom shutter audio uses one buffer per shutter group: mechanical and electronic use two separate buffers even for the same clip; mechanical variants share their group buffer. The three single-shot RAM listening cases passed on the owner's camera. Persistent audio saving followed by a physical cold start remains unqualified; do not interpret package checks as that acceptance. Pre-capture stays outside the ordinary release.
+
+Download the [3.10 prerelease](https://github.com/QAQLeonard/a7c2-tools/releases/tag/v3.10): Windows x64 and Apple Silicon macOS 14+. The six default looks use the mean-DE00 native-first fitter; the two Ricoh defaults use our new Adobe/Cobalt/C2 reference. Color-model validation is separate from camera acceptance.
+
+## Current branches and delivery · 2026-11-23
 
 | Entry | Purpose |
 | --- | --- |
 | [`main`](https://github.com/QAQLeonard/a7c2-tools/tree/main) | Published-version source and user documentation. |
 | [`dev`](https://github.com/QAQLeonard/a7c2-tools/tree/dev) | Current **3.10** development code: local firmware generation, static look storage, icon/name support and paired A7Look/DCP export. |
-| [Downloads](https://github.com/QAQLeonard/a7c2-tools/releases) | The latest published Release is **v3.0.3**. The prepared 3.10 packages have not been published as a Release. |
+| [Downloads](https://github.com/QAQLeonard/a7c2-tools/releases) | Current prerelease: **[v3.10](https://github.com/QAQLeonard/a7c2-tools/releases/tag/v3.10)**, with Windows and Apple Silicon Mac packages. |
 | [Sony Imaging Cloud](https://sony.leonardsaikou.top) | Community looks and sounds; the website uses the new blue-and-white cloud logo. |
 
 **Keep the version at 3.10.** Its Windows package contains only the default six
-paired looks: **Fujifilm Classic Negative (NC), Classic Chrome (CC), Nostalgic
+camera-ready looks with icons: **Fujifilm Classic Negative (NC), Classic Chrome (CC), Nostalgic
 Negative (NN), Astia (AS), Ricoh Positive Film (RP), and Negative Film (RN)**.
 The full **41 DCP/A7Look pairs**, with their icon companions, are a separate
 resource pack for cloud distribution; they are not bundled into Windows.
@@ -31,7 +37,7 @@ Complete physical card updating, cold boot, video and long-term stability remain
 unqualified. Pre-capture remains a separate research effort and is not enabled
 in the ordinary generator.
 
-The feature and USB instructions below describe the published line. Follow `dev` for the 3.10 implementation; this README update does not change main-branch runtime code or Release assets.
+This branch contains the 3.10 development implementation. Successful builds output `BODYDATA.DAT` directly and remove build intermediates; only this DAT belongs on the SD card. The legacy USB guide below is kept under `--legacy-usb`; fixed-firmware recovery uses a locally generated restore DAT.
 
 
 
@@ -41,6 +47,14 @@ The feature and USB instructions below describe the published line. Follow `dev`
 >
 > **This is an unofficial, independent research tool for learning and technical discussion. It is not affiliated with, authorized or endorsed by Sony.**
 >
+> ### Important: the camera may be bricked, and recovery is not guaranteed
+>
+> **Modifications can cause boot failure, repeated restarts, crashes during capture or playback, malfunctions or data loss. They may affect official updates, warranty or repairs, and may require paid repair or mainboard replacement.**
+>
+> **Successful writes, complete readback and passing offline tests do not establish boot safety or stability in every mode. Name, icon and other display-resource changes also carry risks. New development-version features have not all completed physical camera acceptance.**
+>
+> **One-click recovery is not a complete system reinstallation and may not recover the camera. Backups, camera initialization and official updates do not guarantee recovery either. On an error, disconnect or unknown result, stop writing, preserve diagnostics and do not repeatedly start installation or recovery.**
+>
 > ### No commercial use or profit-making
 >
 > **All commercial use and profit-making are prohibited. The author explicitly opposes paid flashing, paid remote installation, resale or paid bundles of the tool, paid unlocking, selling activation keys/dongles, and hardware bundles for profit. This project is provided free of charge. The author offers no paid flashing service and has not authorized anyone to offer these paid services in the author's name.**
@@ -48,10 +62,6 @@ The feature and USB instructions below describe the published line. Follow `dev`
 > ### Do not impersonate Sony or claim author authorization
 >
 > **The author has never authorized anyone to offer paid services, advertise or promise warranty coverage in the author's or Sony's official name. Do not impersonate Sony, the author or an authorized service provider. Third-party fees imply no author involvement, approval, endorsement or guarantee.**
->
-> ### Use at your own risk · Recovery is not guaranteed
->
-> **Modifications can cause boot failure, repeated restarts, malfunctions or data loss, and can affect official updates, warranty or repair. Successful writes and matching readback do not establish boot safety; restoration is not guaranteed to recover the camera.**
 >
 > **Only operate a device you lawfully own or for which the owner has given explicit permission. Back up important data. Do not proceed if you cannot accept device damage and repair costs.**
 >
@@ -61,7 +71,15 @@ The feature and USB instructions below describe the published line. Follow `dev`
 
 A desktop tool for the **Sony A7C II (ILCE-7CM2) on firmware 2.01**. It adds FL2/FL3, custom Creative Looks, electronic shutter sound and Vertical Display, and can restore factory functions in one click.
 
-**3.0 is the first release with a proper graphical interface.** Driver setup, installation, cold reload and verification all happen with buttons in one window; no command line needed.
+**The desktop interface covers driver setup, firmware generation and explicit material updates.** The 3.0 line introduced the GUI; the current development flow remains 3.10.
+
+**3.10 development flow:** build the DAT locally using the owner's official
+2.01 source and original recovery input, install first trust through the existing
+computer flow, then use the generated firmware and subsequent file-only API/SSH
+updates. The current candidate preserves the Sony update key and the established
+WBI recipe. Factory recovery prepares version 2.00 over USB/SSH, then uses a generated restore DAT in a manual card update;
+legacy USB regional restoration remains a separate workflow. See the
+[development guide](docs/en/development.md) for supported inputs and boundaries.
 
 ## Supported cameras
 
@@ -84,6 +102,10 @@ For other models, these independent projects may help. They are not part of this
 
 > [!IMPORTANT]
 > This tool modifies programs and settings in the camera firmware. Read the whole [step-by-step guide](#step-by-step-guide) before you start. If the app reports an error, **export a diagnostic bundle first. Do not keep retrying the write.**
+
+Each normal launch of the current development app shows a risk summary and requires manually accepting it before the interface opens. The linked [risk notice and use statement](docs/en/notices.md#risk-notice-and-use-statement) provides the full text. The tool is free and unofficial. The author opposes paid flashing and prohibits false claims of Sony/author authorization. Original project code uses the standard PolyForm Noncommercial License 1.0.0; third-party and earlier licenses are retained. Updating documentation does not update previously published packages.
+
+**Backups and recovery sources:** ordinary installation does not require a backup or a full firmware download. Recovery uses version preparation and a manual card update; the old USB program-reset entry is disabled. To respect firmware copyright and reduce legal risks, including DMCA considerations, packages omit complete official firmware and original voice packs. Building a stock-body recovery DAT requires **ILCE-7CM2 2.01 `BODYDATA.DAT`** obtained from Sony for local extraction. This policy does not establish authorization for every modification, guarantee recovery, or prevent litigation.
 
 The interface is in Simplified Chinese. Button names below are given in Chinese with an English translation, so you can match them on screen.
 
@@ -114,14 +136,14 @@ The interface is in Simplified Chinese. Button names below are given in Chinese 
 
 | Feature | Description |
 | --- | --- |
-| **One-click install** | Installs the six built-in looks, FL2/FL3, electronic shutter sound and Vertical Display in one pass. The Lightroom plugin is optional. |
+| **One-click install** | Always removes accessibility speech audio and locks Voice Guide off, then installs selected looks, sound and Vertical Display. The Lightroom plugin is optional. |
 | **FL2 / FL3** | Adds FL2 and FL3 to the Creative Look list. You can remove them again at any time. |
 | **Custom Creative Looks** | Writes `.a7look` files into custom slots 1–6 with your own names, or resets slots to ST. Slots you don't list stay unchanged. |
-| **Look conversion** | Converts DCP or CUBE files to `.a7look` offline, without Lightroom. Ships with 15 paired DCP/A7Look profiles. |
+| **Look conversion** | Produces paired `.a7look` and `.dcp` files offline, without Lightroom. Windows bundles the default six pairs; the complete 41-pair collection is a separate cloud resource pack. |
 | **Lightroom plugin** | When you import RAW files, applies the DCP that matches the custom slot used for each shot. |
-| **Electronic shutter sound** | Turns on Sony's native electronic shutter sound, or uses a clip from any audio/video file as a custom sound. |
+| **Shutter speaker sounds** | Independent mechanical/electronic on/off controls; custom audio can target mechanical only, electronic only or both. |
 | **Vertical Display** | Rotates shooting information and icons when the camera is held vertically. The full MENU does not rotate. |
-| **Restore factory functions** | Removes every change this project makes and restores stock 2.01 behavior. **No old backup needed**; body calibration is kept. |
+| **Restore factory functions** | Fixed-layout firmware uses a generated restore DAT and an explicit original source. Historical USB restoration has its own region-limited scope; preserve body calibration. |
 
 ## Download and requirements
 
@@ -130,8 +152,9 @@ The interface is in Simplified Chinese. Button names below are given in Chinese 
 | **Windows 10/11 x64** | `A7C2Tools-Windows-x64.zip` from [Releases](https://github.com/QAQLeonard/a7c2-tools/releases) | Extract the whole archive and run `A7C2Tools.exe`. Keep the `_internal` and `Profiles` folders next to it; don't copy the EXE out on its own. No Python install needed. |
 | **macOS 14+ (Apple Silicon)** | `A7C2Tools-macOS-arm64.dmg` from [Releases](https://github.com/QAQLeonard/a7c2-tools/releases) | Drag the app into Applications. It isn't signed by a developer, so allow it once under System Settings → Privacy & Security. No Intel build. **USB on a real Mac has not been verified yet.** |
 
-Both packages include **15 paired DCP and `.a7look` files** (11 Fujifilm, 4 Ricoh color). The two files for each look share the same name and sit side by side:
+Version **3.10** stays unchanged. Windows includes **six camera-ready A7Look files with icons**, once each, without embedded RAW references or paired DCPs. The full 41-pair collection is packaged separately for Sony cloud distribution. The current 3.10 prerelease also supplies a rebuilt Apple Silicon macOS DMG.
 - **Windows:** in the `Profiles` folder next to the EXE.
+- Windows firmware generation uses bundled local tools; no WSL, Ubuntu or separate Python installation is required. The selected save folder is used directly and previous build outputs are replaced.
 - **macOS:** inside the app. Open them with **打开内置 DCP／A7Look 配对库 (Open paired DCP/A7Look library)** on the Custom Creative Looks page.
 
 The `.a7look` goes into the camera; the matching `.dcp` is for RAW development in Lightroom.
@@ -160,6 +183,9 @@ Camera: **ILCE-7CM2 on firmware 2.01**. No other model or firmware version is su
 
 ## Step-by-step guide
 
+These steps document the legacy USB workflow (`--legacy-usb`). For the 3.10 local firmware flow, use the section above and the development guide.
+
+
 Follow these four steps in order.
 
 ```text
@@ -181,8 +207,8 @@ The app talks to the camera through two USB identities: normal Mass Storage `054
 2. Open **连接与驱动 (Connection & drivers)** in the left sidebar.
 3. Click **检测相机与驱动 (Detect camera & drivers)**. The log should show `054C:0E8A`. If it doesn't, check the cable and the USB mode.
 4. Click **准备两阶段驱动并测试连接 (Prepare two-stage drivers & test connection)**:
-   - The app first installs the driver for `0E8A`, then switches the camera to its service connection and installs the driver for `0336` once it appears.
-   - Windows may ask for administrator permission **once or twice**. Click Yes.
+   - The app prepares administrator rights and its installer before handling `0E8A` and switching modes. Windows PnP detection triggers automatic driver setup when `0336` appears.
+   - Approve the administrator prompt before the mode switch. Driver installation time does not consume the subsequent interface re-enumeration window; there is no need to race Device Manager.
    - An identity that already has a usable driver (WinUSB, libusbK or libusb0) is kept as it is.
    - The camera may show "Please check the connected device" during this step. That's expected.
 5. You're done when the log says **"服务连接成功，驱动准备结束" (service connection succeeded; driver setup finished)**. This step **does not write the camera firmware**.
@@ -249,16 +275,16 @@ On the app's **连接与驱动 (Connection & drivers)** page, the **用 Zadig �
 5. The current driver (for example `USBSTOR`) is left of the green arrow. In the driver box right of the arrow, use the up/down arrows to choose **libusbK**.
 6. Click the big **Replace Driver** button (it reads **Install Driver** when there is no driver yet). Wait 1–2 minutes until it says **The driver was installed successfully**.
 7. Afterwards the camera's drive letter disappears and the camera shows "Please check the connected device". Both are normal.
+8. Once installation ends, close Zadig. Unplug USB, turn the camera off, wait for its activity light to go out, remove the battery for at least one minute, then restart in Mass Storage mode and reconnect.
 
 **Part 2: make `0336` appear, then give it a driver**
 
-1. Leave Zadig open. In this app open **连接与驱动 (Connection & drivers)** and click **准备两阶段驱动并测试连接 (Prepare drivers and test connection)**.
+1. Close Zadig. Open **安装驱动 (Install drivers)** in the app and click **准备两阶段驱动并测试连接 (Prepare drivers and test connection)**. Do not run both installers together.
 2. The app uses the `0E8A` driver you just installed and authenticates. The camera then becomes `Sony USB Device` (`054C 0336`).
    - If the app installs the `0336` driver itself and the log says **“服务连接成功，驱动准备结束” (service connection succeeded, drivers ready)**, you're done; go to Part 3.
-   - If the log says `0336` has no driver, its interface can't be opened, or `0336` never appears: **don't unplug the cable or switch the camera off**; continue with the next step.
-3. Back in Zadig, click **Options → List All Devices** again to refresh. Pick **`Sony USB Device`** and **check that the USB ID reads `054C` `0336`**.
-   - If `0336` isn't listed, the camera has already left service mode. Repeat step 1 of this part and refresh Zadig as soon as `0336` appears.
-4. Choose **libusbK** again, click **Replace Driver** or **Install Driver**, and wait for the success message.
+   - The app prepares its installer before switching modes, installs automatically when `0336` appears and waits again for the interface. **No timed Install click is needed.**
+3. Only after the automatic task has failed and stopped, if `0336` remains present, open Zadig, enable **Options → List All Devices**, select **Sony USB Device**, confirm **054C 0336** and install **libusbK**.
+4. If `0336` has disappeared, preserve the log instead of repeatedly authenticating or racing two installers. Disappearance alone does not establish a return to `0E8A`.
 
 **Part 3: power-cycle and test again**
 
@@ -271,26 +297,20 @@ On the app's **连接与驱动 (Connection & drivers)** page, the **用 Zadig �
 
 - **libusbK fails to install:** run Zadig as administrator again. If it still fails, choose **WinUSB** instead. The app works with WinUSB, libusbK or libusb0.
 - **The camera isn't in the drop-down:** make sure **List All Devices** is ticked, the camera is on in Mass Storage mode, and try another data cable.
-- **To undo it:** click **卸载相机驱动，恢复 Windows 默认连接 (Uninstall camera driver)** on the **连接与驱动** page; this also removes drivers installed with Zadig. Then unplug and replug USB and the camera appears as a drive again.
+- **To restore computer drivers:** click **卸载相机驱动，恢复 Windows 默认连接 (Uninstall camera driver)** on the driver page. Exact-camera third-party packages are backed up before removal. Removing computer drivers cannot guarantee that a camera still reporting `0336` will return to `0E8A`.
 - **Macs need no driver.**
 
 ### Step 2: Installed an earlier version? Restore factory functions first
 
-**If this camera has ever used any version of this project, restore factory functions before installing 3.0.** That includes FL23 v1.0/v2.x, looks imported with `lut.py`, `shutter.py` or `vertical.py`, and earlier desktop previews. This clears leftovers from older versions so 3.0 starts from a clean stock 2.01 state.
+To return to stock body programs, use the card-recovery page:
 
-A camera that was never modified can skip this step.
+1. Connect USB Mass Storage (or configured SSH) and set the version to **2.00**. This changes only the two-byte version metadata, not the body programs.
+2. Generate the recovery DAT locally from your official **2.01 BODYDATA.DAT**. It retains the **3.10** package header and uses the tool signature.
+3. After version write/readback has ended, follow the cold-restart dialog. Place the generated **BODYDATA.DAT** in the SD root and start the update manually from the camera menu.
+4. After the update and a normal start, check menus, shooting and playback. Metadata readback alone is not completed recovery.
 
-1. On the camera, switch Creative Look to **ST**.
-2. Open **恢复原厂功能 (Restore factory functions)** and click **恢复／继续恢复原厂 2.01 功能（无需旧备份）(Restore / continue restoring factory 2.01 functions, no old backup needed)**. Confirm power to start.
-   - The app has built-in stock 2.01 data for the regions it changes, so no old backup or firmware download is needed.
-   - Body calibration, counters and unrelated settings are kept.
-3. After the write and full readback, a dialog says **the restore is not finished yet**. Do a [cold reload](#before-you-start) and check that the camera shows a live view.
-4. Reconnect USB (Mass Storage) and click **重启后核对并完成恢复 (Verify after restart and finish restore)**. The restore is complete only when this check passes; the app then clears the old installation state.
-
-> [!WARNING]
-> Restoring sets all six custom slots to ST. Recipes you had in them **cannot be recovered**. Write down any settings you want to keep first.
-
-If the restore is interrupted, click the same button again: the app reads the camera's current state and finishes only what's left. If the button changes to **断电后重试恢复（本次尚未写入）(Retry after power cycle; nothing written yet)**, nothing was written this time. Do a cold reload as the dialog says, then click it.
+Direct Sony-signed packages require original updater trust restored from this body's first-trust backup. Version lowering alone does not restore trust.
+Old USB factory reset/resume is disabled; historical records are preserved. On errors, keep diagnostics and do not replay unknown writes.
 
 ### Step 3: One-click install
 
@@ -350,20 +370,22 @@ Every write follows the same pattern: write → full readback → dialog asking 
 > Custom looks are written with **ST as their base look**. Just select the custom slot on the camera; you don't need to switch the Creative Look to ST. But don't change that custom slot's base look to anything other than ST in the camera menu, or the custom look may not apply or the colors may be wrong; switching it back to ST fixes it. The camera does not lock this option.
 
 Tools on the same page:
-- **打开内置 DCP／A7Look 配对库 (Open paired DCP/A7Look library)**: 15 pairs (11 Fujifilm, 4 Ricoh); each DCP sits next to its `.a7look` with the same name.
-- **从 DCP／LUT 生成 A7Look… (Generate A7Look from DCP/LUT)**: offline conversion; doesn't connect to the camera.
+- **打开内置 DCP／A7Look 配对库 (Open paired DCP/A7Look library)**: the default six pairs; each DCP sits next to its `.a7look` with the same name.
+- **从 DCP／LUT 生成 A7Look＋DCP… (Generate A7Look and DCP from DCP/LUT)**: offline paired export; doesn't connect to the camera.
   - A **CUBE** must take **Sony ST / sRGB** input and output sRGB. **Log LUTs such as S-Log3 can't be used directly**; see [LUT formats and color spaces](docs/en/lut-formats.md).
   - A **DCP** is parsed and fitted by the app itself; Lightroom isn't needed.
 - **安装 LrC 自动识别插件… (Install Lightroom plugin)**: after installing, enable it once in Lightroom's Plug-in Manager. From then on, when you import RAW files it applies the DCP for the slot each shot used. It never alters the RAW data itself.
 
-### Electronic shutter sound
+### Shutter speaker sounds
 
-1. **开启电子快门声 (Turn on shutter sound)**: turns on Sony's native electronic shutter sound. Cold-reload after the write.
+1. Turn mechanical and electronic speaker sounds on/off separately. Each switch preserves the other side and saved custom audio; neither changes the shutter type. The mechanical mechanism still makes a physical sound.
 2. Choose an audio or video file, set the **start** and **length** (0.01–2 s), then click **转换所选片段 (Convert selected clip)**. This runs on the computer only.
 3. Optionally adjust the volume with **−3 dB / +3 dB / 还原转换时音量 (reset to converted volume)**.
-4. Click **保存当前自定义声音 (Save current custom sound)** and cold-reload after the write.
-5. **相机内临时试听 (Temporary in-camera audition)** is optional. While auditioning, **keep the camera on**, unplug USB and take a test shot; reconnect and save if you like it.
-6. To go back to the original sound, click **恢复原厂音效 (Restore factory sound)**.
+4. In the shared custom-audio entry, select **只修改机械 / 只修改电子 / 机械和电子都修改** (mechanical only / electronic only / both), then **保存到所选快门** (Save to selected shutter). Saving enables the selected sound and preserves the other side's switch/audio. Cold-reload as instructed.
+5. **相机内临时试听 (Temporary in-camera audition)** is optional and uses electronic capture. Keep the camera on, unplug USB and take a test shot, then reconnect to save. Mechanical custom audio plays in the opening phase, with a silent closing segment to avoid playing the same clip twice.
+6. **移除全部自定义音效，关闭电子快门音效** removes both custom sounds and disables electronic speaker sound, retaining the mechanical switch. The global Audio Signals setting can still suppress playback; the tool does not change it automatically.
+
+The new development-version mechanical custom-audio path has offline validation; physical acceptance remains pending. File readback does not establish sound quality, timing or boot safety.
 
 ### Vertical Display
 
@@ -376,9 +398,7 @@ Tools on the same page:
 
 ### Restore factory functions
 
-See [Step 2](#step-2-installed-an-earlier-version-restore-factory-functions-first). The advanced section also offers two other ways to restore:
-- Import a complete stock `BODYDATA.DAT` and restore from it.
-- Return to an earlier state from an old body backup (one made by older FL23 or `lut.py` versions).
+See [Step 2](#step-2-installed-an-earlier-version-restore-factory-functions-first). Current recovery prepares the version and uses a manual card update. It no longer applies an old USB program-reset plan. Historical body-backup tools remain under `--legacy-usb` only.
 
 ## Troubleshooting
 
@@ -389,7 +409,7 @@ See [Step 2](#step-2-installed-an-earlier-version-restore-factory-functions-firs
 | `0336` never appears | The app cools down and retries automatically, up to 3 times. If it still fails, see [Driver errors](#driver-errors-uninstall-then-reinstall) or [install with Zadig](#still-failing-install-with-zadig). |
 | After authentication the camera jumps to playback and `0336` never appears | Try a USB 2.0 port on the computer (or a USB 2.0 cable or hub). On some computers the camera won't enter service mode over a USB 3 high-speed link. |
 | `0336` appears but its interface can't be opened | A driver problem. Uninstall and reinstall the driver; don't keep clicking install. |
-| Install or restore was interrupted | Click **the same button** again. The app reads the current state and picks up where it stopped; finished parts aren't rewritten. |
+| Install or restore was interrupted | **Stop and export diagnostics first.** Continue only when the app explicitly shows a reload/verification checkpoint and follow that phase's instructions. Do not restart installation or recovery after an unknown outcome. Confirmed completed program writes are not replayed. |
 | App reports an unknown result or asks for review | **Don't retry the write.** Click **导出诊断包 (Export diagnostics)** and share it in the community group. |
 | No shutter sound | Check that Audio Signals is on in the camera menu. |
 | Look colors differ slightly from the DCP | Expected: the in-camera table is a fitted approximation. |
@@ -401,10 +421,12 @@ A diagnostic bundle contains device information and local paths, so review it be
 
 | Area | Status |
 | --- | --- |
-| FL2/FL3, six-look install, factory restore | Written, read back and verified after restart on the author's Windows + A7C II |
-| Custom look preview/photos, temporary audition | Tested on the same camera |
-| Persistent custom shutter sound | Offline tests and packaged self-test pass; long-term camera testing in progress |
-| Vertical Display (including menu frames) | Being rewritten; camera acceptance pending |
+| Historical FL2/FL3, look import, recovery and temporary audition | Tested on the author's single Windows + A7C II; this does not establish acceptance of the current combined installation |
+| Complete current development install/recovery lifecycle | Offline validation exists; the combination of new features has not completed physical camera acceptance |
+| New voice cleanup/restoration and greyed menus | Voice-audio removal and freed space verified on one body; voice restoration and the full new combination await physical acceptance |
+| Independent mechanical/electronic speaker controls and persistent custom audio | Offline validation; physical acceptance of the current combination pending |
+| Native portrait image resources | Offline validation; physical acceptance pending |
+| Custom names, fonts and display paths | Resource-format and length checks exist; arbitrary-character glyph coverage and all language/capture/playback paths remain unverified |
 | macOS USB | Package builds; USB on a real Mac not yet verified |
 
 Offline tests and byte readback can't prove the camera works correctly in every situation, and everything so far has been verified on a single camera. Test records for each version are in the [changelog](docs/en/changelog.md).

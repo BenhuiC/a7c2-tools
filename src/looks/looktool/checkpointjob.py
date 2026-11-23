@@ -8,7 +8,8 @@ from .devicesession import Camera, invoke
 from .backupstore import write_json
 
 TEMPS={'checkpoint.staged.so','checkpoint.program.request','checkpoint.program.result',
-       'checkpoint.names.request','checkpoint.names.result','shutter.staged.so','shutter.probe.result'}
+       'checkpoint.names.request','checkpoint.names.result','shutter.staged.so','shutter.probe.result',
+       'a7c2-preview-staged.so'}
 
 
 def program_difference(expected, actual):
@@ -152,7 +153,7 @@ class Rollback:
         pass
     def settings_readback_expected(self,before,after,expected):
         return expected
-    def run(self,archive,battery,firmware_version,*,power_confirmed=False):
+    def run(self,archive,battery,firmware_version,*,power_confirmed=False,voice_source=None):
         if firmware_version!='2.01':raise ValueError('Read the camera version page: rollback supports 2.01 only')
         from .power import require_power
         power=require_power(battery,confirmed=power_confirmed)
@@ -166,7 +167,18 @@ class Rollback:
         try:
             with self.factory(manifest['identity']) as camera:
                 checkpoint.same_body(manifest['identity'],camera.identity)
+                from .requestcleanup import supersede_temporary
+                supersede_temporary(camera,self.root/'evidence/superseded-temporary',self.record)
                 current=self.capture(camera)
+                from . import voicelock
+                if voicelock.active(current['appFw.so']) and not voicelock.active(target['appFw.so']):
+                    if not voice_source:
+                        raise ValueError('此备份会解除语音关闭限制。请提供官方 2.01 文件或该备份附带的语音 ZIP，先补回资源；本次尚未写入程序。')
+                    from .resourceworker import restore_voice
+                    from .verticalresources import release
+                    target_vertical=camera.records(target['settings-ram.bin'])[0].get(0x02cf1906)
+                    release_space=(lambda:release(camera,self,current)) if target_vertical and target_vertical.data==b'\1' else None
+                    restore_voice(camera,self,voice_source,before_restore=release_space)
                 checkpoint.write(self.root/'before.private.zip',current,camera.identity,provenance={'type':'before-full-rollback'})
                 # Old FL23 backups carry their own body serial/programs/settings.
                 # Reconstruct appended names from current native records; never
@@ -202,11 +214,11 @@ class Rollback:
                     self.native(camera,'wbi',0);self.native(camera,'wbi',1)
                 elif runtime['image_mode'].strip()!='0':raise ValueError('Unsupported retained image state')
             self.save('RESTORED_AWAITING_RELOAD')
-            print('All I/O ended. Disconnect USB/power, shut down normally, wait for the access lamp, remove battery for ≥1 minute. Restart and check preview/photos/playback, then run: python recovery.py verify "'+str(self.root)+'" --accept-photos',flush=True)
+            print('All I/O ended. Disconnect USB/power, shut down normally, wait for the access lamp, remove battery for ≥1 minute. Restart and check preview/photos/playback, then run: python recovery.py verify "'+str(self.root)+'"',flush=True)
             return self.state
         except BaseException as exc:
             self.save('NEEDS_REVIEW',error=str(exc));raise
-    def verify(self,accept_photos=False):
+    def verify(self):
         self.state=json.loads(self.state_path.read_text(encoding='utf-8'))
         if self.state['phase'] not in ('RESTORED_AWAITING_RELOAD','LOADED','COMPLETE'):raise ValueError('Rollback did not finish; inspect evidence before further actions')
         manifest,target=checkpoint.read(self.root/'target.private.zip')
@@ -222,6 +234,6 @@ class Rollback:
             for span in runtime['spans']:
                 expected=target['appFw.so'][span['offset']:span['offset']+span['length']].hex()
                 if span['memory']!=expected or span['disk']!=expected:raise ValueError('Old AP is still loaded; complete a cold restart')
-        self.save('COMPLETE' if accept_photos else 'LOADED',physical_checks_accepted=accept_photos,
+        self.save('LOADED',
             loaded_state_scope='AP probe spans; CP RAM and physical behavior require user checks')
         return self.state

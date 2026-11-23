@@ -28,7 +28,8 @@ def fetch(url):
 
 
 PRESET_NAMES = tuple('slot%d.a7look' % slot for slot in range(1,7)) + (
-    'credits.json','NOTICE.txt','CC-BY-NC-SA-4.0.txt')
+    'credits.json','NOTICE.txt')
+OPTIONAL_PRESET_NAMES = ('CC-BY-NC-SA-4.0.txt',)
 
 
 def import_presets(archive, root=ROOT):
@@ -41,6 +42,8 @@ def import_presets(archive, root=ROOT):
         prefix=candidates[0][:-len('slot1.a7look')]
         # Read all required files before replacing an existing local pack.
         values={name:source.read(prefix+name) for name in PRESET_NAMES}
+        values.update({name:source.read(prefix+name) for name in OPTIONAL_PRESET_NAMES
+                       if prefix+name in source.namelist()})
         library=archive_values(source)
     target.mkdir(parents=True,exist_ok=True)
     for name,value in values.items():(target/name).write_bytes(value)
@@ -53,6 +56,8 @@ def import_presets(archive, root=ROOT):
 def export_presets(destination, root=ROOT):
     folder=Path(root)/'desktop-assets/presets/default-six-v1'
     values={name:(folder/name).read_bytes() for name in PRESET_NAMES}
+    values.update({name:(folder/name).read_bytes() for name in OPTIONAL_PRESET_NAMES
+                   if (folder/name).is_file()})
     library=profile_files(root)
     destination=Path(destination);destination.parent.mkdir(parents=True,exist_ok=True)
     with zipfile.ZipFile(destination,'w',zipfile.ZIP_DEFLATED) as output:
@@ -112,6 +117,11 @@ def main():
                 print('Pinned ExifTool archive unavailable ('+str(exc)[:120]+'); using the official download.',flush=True)
                 install(dest)
         else:install(dest)
+    sys.path[:0]=[str(ROOT/'src'),str(ROOT/'src/looks')]
+    from profilepack import refresh_labels
+    from desktopapp.presets import refresh_assets
+    refresh_labels(ROOT)
+    if (ROOT/'desktop-assets/presets/default-six-v1/slot1.a7look').is_file():refresh_assets(ROOT)
     print('Build helpers prepared. No driver installed; no camera connected.')
 
 

@@ -1,0 +1,128 @@
+name: Current macOS 3.10 package
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '14.0'
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONUNBUFFERED: '1'
+      A7C2_DISTRIBUTION_IDENTITY: ${{ github.workspace }}/../application-identity
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: desktop-requirements.txt
+      - name: Native dependencies
+        run: |
+          brew install e2fsprogs
+          python -m pip install cmake==3.31.6 setuptools==80.9.0 setuptools-scm==8.3.1 wheel==0.45.1 backports.tarfile==1.2.0
+          python -m pip install --no-build-isolation -r desktop-requirements.txt pyinstaller==6.16.0 pytest==8.3.5
+      - name: Restore existing application signing identity
+        env:
+          FIRMWARE_SIGNING_PRIVATE: ${{ secrets.FIRMWARE_SIGNING_PRIVATE }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          folder=Path(os.environ['A7C2_DISTRIBUTION_IDENTITY']);folder.mkdir(mode=0o700)
+          key=os.environ['FIRMWARE_SIGNING_PRIVATE']
+          if not key:raise RuntimeError('Existing distribution signing identity required')
+          target=folder/'firmware.private.pem';target.write_text(key);target.chmod(0o600)
+          PY
+      - name: Native build assets
+        run: |
+          mkdir -p src/desktopapp/assets/image-tools
+          mkdir -p desktop-assets/macos/e2fsprogs-source
+          brew cat e2fsprogs > desktop-assets/macos/e2fsprogs-source/homebrew-formula.rb
+          brew info --json=v2 e2fsprogs > desktop-assets/macos/e2fsprogs-source/homebrew-build.json
+          python - <<'PY'
+          import json,urllib.request
+          from pathlib import Path
+          folder=Path('desktop-assets/macos/e2fsprogs-source')
+          formula=json.loads((folder/'homebrew-build.json').read_text())['formulae'][0]
+          url=formula['urls']['stable']['url']
+          urllib.request.urlretrieve(url,folder/url.rsplit('/',1)[1])
+          (folder/'NOTICE.txt').write_text('Native debugfs/e2fsck compiled from e2fsprogs '+formula['versions']['stable']+' for macOS 14, with static project libraries and NLS disabled.\nLicense: GPL-2.0-only AND LGPL-2.0-only; exact upstream source and Homebrew source provenance accompany this package.\nUsed only on local firmware image copies.\n')
+          PY
+          mkdir "$RUNNER_TEMP/e2fsprogs-build"
+          tar -xf desktop-assets/macos/e2fsprogs-source/e2fsprogs-*.tar.* -C "$RUNNER_TEMP/e2fsprogs-build" --strip-components=1
+          (
+            cd "$RUNNER_TEMP/e2fsprogs-build"
+            ./configure --disable-nls --disable-bsd-shlibs --disable-elf-shlibs --disable-fsck --disable-e2initrd-helper --disable-fuse2fs --without-crond-dir CFLAGS='-O2 -mmacosx-version-min=14.0' LDFLAGS='-mmacosx-version-min=14.0'
+            make -j3
+          )
+          cp "$RUNNER_TEMP/e2fsprogs-build/debugfs/debugfs" src/desktopapp/assets/image-tools/
+          cp "$RUNNER_TEMP/e2fsprogs-build/e2fsck/e2fsck" src/desktopapp/assets/image-tools/
+          python dev/desktop/prepare_assets.py
+          python -c "import platform,keystone,unicorn; assert platform.machine()=='arm64'; print(keystone.Ks(keystone.KS_ARCH_ARM64,keystone.KS_MODE_LITTLE_ENDIAN).asm('mov x0,1')); unicorn.Uc(unicorn.UC_ARCH_ARM64,unicorn.UC_MODE_ARM)"
+      - name: Mac host and package contracts
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest -q -p no:cacheprovider -p no:faulthandler dev/desktop/test_macos_host.py dev/desktop/test_macadmin.py dev/desktop/test_macos_binary.py dev/desktop/test_compiler_cache.py
+      - name: Native shutter variants and saved selection contracts
+        env:
+          QT_QPA_PLATFORM: offscreen
+          PYTHONPATH: src:src/looks:src/shutter_sound
+        run: python -m pytest -q -p no:cacheprovider -p no:faulthandler dev/shutter_sound/tests/test_targeted_sound.py dev/shutter_sound/tests/test_sound_shutdown.py dev/shutter_sound/tests/test_sound_variants.py dev/shutter_sound/tests/test_candidate.py dev/desktop/test_firmware_custom_sound.py
+      - name: Build current native app and DMG
+        run: python dev/desktop/build.py
+      - name: Packaged app checks without camera or screenshots
+        run: |
+          app="$PWD/dist/A7C2Tools.app/Contents/MacOS/A7C2Tools"
+          mkdir "$RUNNER_TEMP/synthetic-images"
+          dd if=/dev/zero of="$RUNNER_TEMP/synthetic-images/usr.img" bs=1048576 count=8
+          "$(brew --prefix e2fsprogs)/sbin/mke2fs" -t ext2 -O none -F "$RUNNER_TEMP/synthetic-images/usr.img"
+          export A7C2_MACOS_IMAGE_FIXTURE="$RUNNER_TEMP/synthetic-images"
+          QT_QPA_PLATFORM=offscreen A7C2_DESKTOP_DATA="$RUNNER_TEMP/ui-smoke" "$app" --smoke-test
+          python dev/desktop/macos_release_smoke.py --app "$app" --report dist/macos-guide-self-test.json
+          python dev/desktop/startup_state_smoke.py --app "$app" --report dist/startup-state-self-test.json
+          python dev/desktop/mac_authorization_smoke.py
+          codesign --verify --deep --strict dist/A7C2Tools.app
+          hdiutil verify dist/*.dmg
+      - name: Full packaged firmware generation on exFAT output with SSH
+        run: |
+          python - <<'PY'
+          import shutil
+          from pathlib import Path
+          duplicate=Path('dist/A7C2Tools').resolve()
+          if duplicate.is_dir():
+              duplicate.relative_to(Path('dist').resolve())
+              shutil.rmtree(duplicate)
+          PY
+          mkdir "$RUNNER_TEMP/official-input"
+          curl --fail --location --retry 2 --connect-timeout 30 --max-time 600 --silent --show-error --user-agent 'Mozilla/5.0' 'https://support.d-imaging.sony.co.jp/download/NEX/uua3b90658/BODYDATA.DAT?fm=jp?fm=jp&upid=&s_tc=' --output "$RUNNER_TEMP/official-input/BODYDATA.DAT"
+          hdiutil create -quiet -size 12g -type SPARSE -fs ExFAT -volname A7C2Output "$RUNNER_TEMP/a7c2-output.sparseimage"
+          mkdir "$RUNNER_TEMP/sd-output"
+          hdiutil attach -quiet -nobrowse -mountpoint "$RUNNER_TEMP/sd-output" "$RUNNER_TEMP/a7c2-output.sparseimage"
+          trap 'hdiutil detach -quiet "$RUNNER_TEMP/sd-output"' EXIT
+          python - <<'PY'
+          import os,plistlib,subprocess
+          volume=os.environ['RUNNER_TEMP']+'/sd-output'
+          info=plistlib.loads(subprocess.check_output(['diskutil','info','-plist',volume]))
+          assert info.get('FilesystemType')=='exfat',info.get('FileSystemPersonality')
+          print('Actual output filesystem: exFAT')
+          PY
+          python dev/desktop/macos_firmware_build_smoke.py --app dist/A7C2Tools.app/Contents/MacOS/A7C2Tools --source "$RUNNER_TEMP/official-input/BODYDATA.DAT" --workspace "$RUNNER_TEMP/sd-output/PRIVATE" --report dist/firmware-build-self-test.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report=Path('dist/firmware-build-self-test.json')
+          data=json.loads(report.read_text());data['output_filesystem']='exFAT'
+          report.write_text(json.dumps(data,indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: A7C2Tools-macOS-arm64-3.10
+          path: |
+            dist/*.dmg
+            dist/*self-test.json
+            ~/Library/Logs/A7C2Tools/startup-error.log
+          if-no-files-found: warn

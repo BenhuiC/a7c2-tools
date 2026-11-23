@@ -1,4 +1,5 @@
 """Incremental custom-slot editor. This module never opens a camera."""
+import json
 from pathlib import Path
 from PySide6 import QtCore, QtGui, QtWidgets as W
 from .theme import COLORS, EDITOR as STYLE
@@ -51,6 +52,9 @@ class Operation(W.QFrame):
         self.browse=W.QPushButton('选择文件…');self.browse.clicked.connect(self.choose_file)
         self.name=W.QLineEdit();self.name.setPlaceholderText('留空沿用文件内名称')
         grid.addWidget(self.file,1,0);grid.addWidget(self.browse,1,1);grid.addWidget(self.name,1,2)
+        self.icon_button=W.QPushButton('菜单图标…');self.icon_button.setEnabled(False);self.icon_button.clicked.connect(self.edit_icon)
+        self.icon_status=label('可选，随 A7Look 保存',muted=True)
+        grid.addWidget(self.icon_button,2,1);grid.addWidget(self.icon_status,2,0,1,1)
         grid.setColumnStretch(0,3);grid.setColumnStretch(2,2);self.details.addWidget(write)
         self.action.currentIndexChanged.connect(self.update_mode)
         self.slot.currentIndexChanged.connect(self.changed)
@@ -59,8 +63,8 @@ class Operation(W.QFrame):
 
     def update_mode(self):
         self.details.setCurrentIndex(self.action.currentIndex())
-        self.details.setFixedHeight(36 if self.action.currentIndex()==0 else 74)
-        self.setFixedHeight(115 if self.action.currentIndex()==0 else 153)
+        self.details.setFixedHeight(36 if self.action.currentIndex()==0 else 112)
+        self.setFixedHeight(115 if self.action.currentIndex()==0 else 191)
         self.changed.emit()
 
     def choose_file(self):
@@ -69,7 +73,20 @@ class Operation(W.QFrame):
         if path:self.set_file(path)
 
     def set_file(self,path):
-        self.file_path=str(path);self.file.setText(Path(path).name);self.file.setToolTip(str(path));self.changed.emit()
+        self.file_path=str(path);self.file.setText(Path(path).name);self.file.setToolTip(str(path))
+        self.icon_button.setEnabled(Path(path).is_file())
+        try:
+            document=json.loads(Path(path).read_text(encoding='utf-8-sig'))
+            icon=document.get('menu_icon')if isinstance(document,dict)else None
+            self.icon_status.setText('已嵌入菜单图标 · 与外观一起写入' if icon else '未附带图标 · 沿用原生 ST 图标')
+        except (OSError,ValueError):self.icon_status.setText('请先选择有效的 A7Look')
+        self.changed.emit()
+
+    def edit_icon(self):
+        from .iconeditor import MenuIconDialog
+        try:dialog=MenuIconDialog(self.file_path,self)
+        except (OSError,ValueError) as exc:W.QMessageBox.warning(self,'无法编辑图标',str(exc));return
+        if dialog.exec()==W.QDialog.Accepted and dialog.output:self.set_file(dialog.output)
 
     def value(self):
         value=dict(slot=self.slot.currentData(),action='restore' if self.action.currentIndex()==0 else 'write')
@@ -80,18 +97,20 @@ class Operation(W.QFrame):
 class LookEditor(W.QWidget):
     changed=QtCore.Signal()
 
-    def __init__(self):
-        super().__init__();self.rows=[];self._loading=False;self.setStyleSheet(STYLE)
+    def __init__(self,*,write_only=False,for_firmware=False):
+        super().__init__();self.rows=[];self._loading=False;self.write_only=write_only;self.for_firmware=for_firmware;self.setStyleSheet(STYLE)
         box=W.QVBoxLayout(self);box.setContentsMargins(0,0,0,0);box.setSpacing(12)
-        top=W.QHBoxLayout();self.add=W.QPushButton('+ 添加操作项')
+        top=W.QHBoxLayout();self.add=W.QPushButton('+ 添加外观' if for_firmware else '+ 添加操作项')
         self.add.clicked.connect(lambda:self.add_row());top.addWidget(self.add)
-        top.addWidget(label('新增项默认“恢复 ST 默认”，可切换为写入。',muted=True));top.addStretch();box.addLayout(top)
+        top.addWidget(label('选择槽位和 A7Look 文件，最多六款。' if for_firmware else
+            '添加要更新的槽位，选择 A7Look 文件。' if write_only else '新增项默认“恢复 ST 默认”，可切换为写入。',muted=True));top.addStretch();box.addLayout(top)
         self.row_box=W.QVBoxLayout();self.row_box.setSpacing(12);box.addLayout(self.row_box)
         self.empty=W.QFrame();self.empty.setProperty('card',True)
         empty_box=W.QVBoxLayout(self.empty);empty_box.setContentsMargins(20,25,20,25)
-        empty_title=label('尚未添加操作项');empty_title.setAlignment(QtCore.Qt.AlignCenter)
+        empty_title=label('尚未选择自选外观' if for_firmware else '尚未添加操作项');empty_title.setAlignment(QtCore.Qt.AlignCenter)
         empty_title.setStyleSheet('font-size:17px;font-weight:600;');empty_box.addWidget(empty_title)
-        note=label('点击“添加操作项”，选择目标槽位和操作。当前六个槽位均保持原样。',muted=True)
+        note=label('点击“添加外观”选择文件；未选择的槽位使用原生 ST。' if for_firmware else
+            '点击“添加操作项”，选择目标槽位和操作。当前六个槽位均保持原样。',muted=True)
         note.setWordWrap(True);note.setAlignment(QtCore.Qt.AlignCenter);empty_box.addWidget(note)
         self.row_box.addWidget(self.empty)
         summary=W.QFrame();summary.setProperty('card',True)
@@ -105,6 +124,9 @@ class LookEditor(W.QWidget):
         occupied={r.slot.currentData() for r in self.rows};free=[n for n in range(1,7) if n not in occupied]
         if not free:return None
         row=Operation(slot if slot is not None else free[0]);self.rows.append(row)
+        if self.write_only:
+            row.action.setCurrentIndex(1)
+            row.action.model().item(0).setEnabled(False)
         row.changed.connect(self.update_summary);row.remove_requested.connect(self.remove_row)
         self.row_box.addWidget(row);self.update_summary();return row
 
@@ -137,8 +159,12 @@ class LookEditor(W.QWidget):
         self.empty.setVisible(not values);self.add.setEnabled(len(values)<6)
         for row in self.rows:
             for i in range(6):row.slot.model().item(i).setEnabled(i+1 not in used or i+1==row.slot.currentData())
-        self.summary.setText('本次更改 %d 个槽位：%d 项写入 · %d 项恢复'%(len(values),writes,len(values)-writes))
+        self.summary.setText('已选择 %d 款外观'%writes if self.for_firmware else
+            '本次更改 %d 个槽位：%d 项写入 · %d 项恢复'%(len(values),writes,len(values)-writes))
         kept=[str(n) for n in range(1,7) if n not in used]
-        self.preserved.setText('保持原样：'+('自订 '+'、'.join(kept) if kept else '无（六个槽位均在本次清单中）'))
-        self.validation.setText(' '.join(self.errors()));self.validation.setVisible(bool(self.errors()))
+        self.preserved.setText(('使用原生 ST：' if self.for_firmware else '保持原样：')+
+            ('槽位 '+'、'.join(kept) if self.for_firmware and kept else
+             '自订 '+'、'.join(kept) if kept else '无（六个槽位均在本次清单中）'))
+        errors=self.errors()
+        self.validation.setText(' '.join(errors));self.validation.setVisible(bool(errors))
         if not self._loading:self.changed.emit()

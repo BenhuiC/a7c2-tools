@@ -11,20 +11,28 @@ from . import photobasis, photobuild, photoformat
 
 
 def present(cp):
-    return cp[photobuild.DATA_FILE:photobuild.DATA_FILE+4]==struct.pack('<I',photobuild.MAGIC)
+    from . import fixedbankcode
+    if fixedbankcode.present(cp):return True
+    from . import photofull
+    return photofull.present(cp)or cp[photobuild.DATA_FILE:photobuild.DATA_FILE+4]==struct.pack('<I',photobuild.MAGIC)
 
 
 def refresh_gamma_table(cp):
     """Keep the active native rows in sync after an independent FL23 update.
 
     Native-photo hooks read this relocated table, not the original table
-    changed by FL23. Keep the twelve custom-slot rows and all slot data intact.
-    Reconstruction also accepts the stale table left by older FL23 installs.
+    changed by FL23. Refresh the added ST rows with the native null fallback,
+    keeping all slot controls intact. Accept the exact older nullable layout.
     """
+    from . import photofull,fixedbankcode,fixedbank
+    if fixedbankcode.present(cp):return fixedbank.refresh_native(cp)
+    if photofull.present(cp):return photofull.refresh_gamma_table(cp)
     original=0x1209480-photobuild.BASE
     size=50*28
     result=bytearray(cp)
     result[photobuild.TABLE_FILE:photobuild.TABLE_FILE+size]=cp[original:original+size]
+    result[photobuild.TABLE_FILE+size:photobuild.CODE_FILE]=photoformat.custom_gamma_rows(
+        cp[original:original+size])
     result=bytes(result)
     inspect(result)
     return result
@@ -54,6 +62,8 @@ def underlay(cp):
     Retired bytes stay local to this source. This is not an original-firmware
     restoration; full Recovery uses the owner's complete checkpoint.
     """
+    from . import photofull
+    if photofull.present(cp):return photofull.underlay(cp)
     result=bytearray(cp)
     for hook in template()['hooks']:
         at,raw=hook['offset'],bytes.fromhex(hook['before'])
@@ -74,7 +84,7 @@ def build(source,baseline,knobs,*,active_mask):
     """Data-only assembly of the reviewed wrapper; no assembler dependency."""
     value=template();target=bytearray(source)
     original=source[0x1209480-photobuild.BASE:0x1209480-photobuild.BASE+50*28]
-    table=original+(original[:28]+original[10*28:11*28])*6
+    table=original+photoformat.custom_gamma_rows(original)
     for pointer in {struct.unpack_from('<I',original,row*28+column*4)[0]
                     for row in (0,10) for column in range(7)}-{0}:
         for spec in knobs:photobasis.curve(source[pointer-photobuild.BASE:pointer-photobuild.BASE+576],spec.get('tone',(0,0,0)))
@@ -106,25 +116,62 @@ def loaded_storage(cp):
         if not (0x20000+offset<=start<end<=0x20000+offset+size and
                 va<=start+photobuild.BASE<end+photobuild.BASE<=va+size):
             raise ValueError('Native-photo storage is outside the existing allocated loaded segments')
+        # Containment in both spaces is insufficient: shifted segment headers
+        # can still contain the ranges while loading their bytes elsewhere.
+        if va-(0x20000+offset)!=photobuild.BASE:
+            raise ValueError('Native-photo segment file/virtual mapping differs')
     data_end=sum(struct.unpack_from('<2I',cp,0x20140))
     if data_end>0x120a000:raise ValueError('Native-photo storage must not extend into BSS')
 
 
 def allocation(cp):
     from .device_layout import runtime
+    from . import uploadpending
+    if uploadpending.active(cp):
+        cp=uploadpending.normalize(cp)
     loaded_storage(cp)
-    spec=next(row for row in runtime()['cp_sources'] if row['kind']=='fl23')
+    asset=runtime()
+    spec=next(row for row in asset['cp_sources'] if row['kind']=='fl23')
     # These authored entry/selector and retry blocks establish which runtime
     # owns the extension. Empty bytes alone are never an allocation proof.
     for window in spec['windows']:
         if window['offset'] not in (0xb27490,0xb27f10):continue
         raw=bytes.fromhex(window['after']);at=window['offset']
-        if cp[at:at+len(raw)]!=raw:raise ValueError('Six-table runtime allocation conflicts at '+hex(at))
+        accepted=[raw]+[bytes.fromhex(old['after']) for old in asset.get('superseded_windows',()) if old['offset']==at]
+        if cp[at:at+len(raw)] not in accepted:raise ValueError('Six-table runtime allocation conflicts at '+hex(at))
+
+
+def preview_helper(cp):
+    """Replace an exact earlier reviewed preview helper image by the current one.
+
+    Other bytes are left alone for allocation() to reject. Callers pass a CP
+    whose native-photo hooks are not applied (see underlay).
+    """
+    from .device_layout import runtime
+    from . import uploadpending
+    # Compare the reviewed underlying helper while retaining the installed
+    # pending-upload instructions in the actual output.
+    source=uploadpending.normalize(cp) if uploadpending.active(cp) else cp
+    asset=runtime()
+    spec=next(row for row in asset['cp_sources'] if row['kind']=='fl23')
+    window=next(row for row in spec['windows'] if row['offset']==0xb27490)
+    at=window['offset'];current=bytes.fromhex(window['after'])
+    previous=next((bytes.fromhex(old['after']) for old in asset.get('superseded_windows',())
+                   if old['offset']==at and source[at:at+len(current)]==bytes.fromhex(old['after'])),None)
+    if previous is None:return cp
+    result=bytearray(cp)
+    for i,(old,new) in enumerate(zip(previous,current)):
+        if old!=new:result[at+i]=new
+    return bytes(result)
 
 
 def inspect(cp,baseline=None):
+    from . import fixedbankcode,fixedbank
+    if fixedbankcode.present(cp):return {k:v for k,v in fixedbank.state(cp,baseline).items()if k!='bank'}
     if not present(cp):return None
     loaded_storage(cp)
+    from . import photofull
+    if photofull.present(cp):return photofull.inspect(cp,baseline)
     magic,version,mask,stride=struct.unpack_from('<4I',cp,photobuild.DATA_FILE)
     if (magic,version,stride)!=(photobuild.MAGIC,1,photobasis.STRIDE) or mask not in range(64):
         raise ValueError('Unsupported native-photo runtime header')
@@ -134,14 +181,23 @@ def inspect(cp,baseline=None):
         knobs.append(unpack(cp[at:at+stride]))
     base=underlay(cp);allocation(base)
     expected,report=build(base,baseline or neutral_bank(cp),knobs,active_mask=mask)
+    # Recognize the exact old nullable copies without accepting arbitrary
+    # table/code differences. Every subsequent update builds resolved rows.
+    legacy=bytearray(expected)
+    original=base[0x1209480-photobuild.BASE:0x1209480-photobuild.BASE+50*28]
+    legacy[photobuild.TABLE_FILE+50*28:photobuild.CODE_FILE]=photoformat.custom_gamma_rows(
+        original,resolve_null=False)
     for at,length in report['regions']:
-        if expected[at:at+length]!=cp[at:at+length]:
+        if cp[at:at+length] not in (expected[at:at+length],legacy[at:at+length]):
             raise ValueError('Native-photo runtime bytes conflict at '+hex(at))
     return dict(revision=photobuild.REVISION,mask=mask,knobs=knobs)
 
 
 def update(cp,changes,baseline=None,*,allocation_proved=False):
     """None clears only that slot's native stage; other slots retain theirs."""
+    from . import editrecipe,photofull
+    if photofull.present(cp)or any(v is not None and v.get('schema')==editrecipe.SCHEMA for v in changes.values()):
+        return photofull.update(cp,changes,baseline,allocation_proved=allocation_proved)
     state=inspect(cp,baseline)
     if state is None and not any(value is not None for value in changes.values()):return cp
     loaded_storage(cp)
@@ -159,7 +215,7 @@ def update(cp,changes,baseline=None,*,allocation_proved=False):
             if baseline is None:raise ValueError('Fresh body ST records are required for native stages')
             blob=photobasis.compile_delta(baseline,delta)
             knobs[slot-1]=unpack(blob);mask|=1<<(slot-1)
-    result,_=build(underlay(cp) if state else cp,bank,knobs,active_mask=mask)
+    result,_=build(preview_helper(underlay(cp) if state else cp),bank,knobs,active_mask=mask)
     if len(result)!=len(cp) or result[0x20124:0x20154]!=cp[0x20124:0x20154]:
         raise ValueError('Native stages must preserve file length and loaded segment headers')
     inspect(result,bank)
@@ -167,6 +223,17 @@ def update(cp,changes,baseline=None,*,allocation_proved=False):
 
 
 def slot_bytes(cp,slot):
+    from . import photofull,editrecipe
+    from . import fixedbankcode,fixedbank
+    if fixedbankcode.present(cp):
+        state=fixedbank.state(cp);stage=state['stages'][slot-1]
+        if stage is None:return None
+        entry=fixedbank.parse(fixedbank.extract_cp(cp))['entries'][slot-1]
+        return entry[1][fixedbank.FIXED_RECORD+4:]if entry[2]==2 else photobasis.compile_delta(state['bank'],stage)
+    if photofull.present(cp):
+        inspect(cp);state=photofull.read_state(cp);stage=state['stages'][slot-1]
+        if stage is None:return None
+        return editrecipe.pack(stage)if stage.get('schema')==editrecipe.SCHEMA else photobasis.compile_delta(state['bank'],stage)
     state=inspect(cp)
     if state is None or not state['mask']&(1<<(slot-1)):return None
     at=photobuild.PARAMS_VA-photobuild.BASE+(slot-1)*photobasis.STRIDE
@@ -174,6 +241,11 @@ def slot_bytes(cp,slot):
 
 
 def slot_delta(cp,slot,baseline):
+    from . import fixedbankcode,fixedbank
+    if fixedbankcode.present(cp):return fixedbank.state(cp,baseline)['stages'][slot-1]
+    from . import photofull
+    if photofull.present(cp):
+        inspect(cp,baseline);return photofull.read_state(cp)['stages'][slot-1]
     raw=slot_bytes(cp,slot)
     return photobasis.pack(baseline,**unpack(raw))[1] if raw is not None else None
 
@@ -187,5 +259,6 @@ def signature(cp,slot):
 def window_priority(window):
     chip,at=window['chip'],int(window['offset'],16)
     if chip==0:return (3,at)
-    if photobuild.TABLE_FILE<=at<0xb27f0e or photobuild.DATA_FILE<=at<0x1101fa0:return (0,at)
+    from . import photofull
+    if photofull.PREFIX_FILE<=at<photofull.PREFIX_END or photobuild.TABLE_FILE<=at<0xb27f0e or photobuild.DATA_FILE<=at<0x1101fa0:return (0,at)
     return (2 if at<=0xb27500<at+window['bytes'] else 1,at)

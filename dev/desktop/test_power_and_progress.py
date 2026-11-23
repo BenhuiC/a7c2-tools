@@ -11,7 +11,8 @@ from contextlib import redirect_stdout
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 from PySide6 import QtCore, QtWidgets as W
-from desktopapp import drivers, jobs, worker
+from desktopapp import jobs, worker
+from desktopapp.platforms import usb_drivers as drivers
 from desktopapp.window import Window
 from looktool.power import require_power
 
@@ -40,8 +41,8 @@ class PowerProgressTests(unittest.TestCase):
 
     def test_confirmation_does_not_invent_a_battery_percentage(self):
         value = require_power(confirmed=True)
-        self.assertIsNone(value['battery_percent'])
-        self.assertFalse(value['usb_battery_measured'])
+        self.assertIsNone(value.get('battery_percent'))
+        self.assertEqual(value, {'confirmed': True})
         for charge in (None, 0, 49, 101):
             with self.assertRaises(ValueError):
                 require_power(charge)
@@ -121,7 +122,7 @@ class PowerProgressTests(unittest.TestCase):
         self.assertNotIn('battery', window.common())
         with patch.object(W.QMessageBox, 'question', return_value=W.QMessageBox.Cancel) as question, \
              patch.object(jobs, 'new_job') as job:
-            window.launch('look_install', {'workspace': 'not-opened'})
+            window.launch('direct_fl23_enable', {'workspace': 'not-opened'})
         self.assertIn('电量充足', question.call_args.args[2])
         job.assert_not_called()
 
@@ -135,7 +136,7 @@ class PowerProgressTests(unittest.TestCase):
         window = self.window()
         with patch.object(W.QMessageBox, 'question', return_value=W.QMessageBox.Yes) as question, \
              patch('desktopapp.window.QtCore.QProcess') as process:
-            for action in ('look_install', 'sound_off'):
+            for action in ('direct_fl23_enable', 'sound_off'):
                 window.launch(action, {'workspace': 'offline-mocked'})
                 request = json.loads((window.current_job / 'request.private.json').read_text())
                 self.assertTrue(request['arguments']['power_confirmed'])
@@ -143,17 +144,15 @@ class PowerProgressTests(unittest.TestCase):
                 window.process = None
         self.assertEqual(question.call_count, 2)
 
-    def test_lut_worker_forwards_confirmation_instead_of_fake_charge(self):
-        work = self.root / 'look'
-        work.mkdir()
-        (work / 'job.private.json').write_text('{"phase":"AWAITING_RELOAD"}')
-        args = {'workspace': str(work), 'power_confirmed': True}
-        with patch('looktool.devicecli.main', return_value=0) as backend:
-            worker.run('look_install', args, self.root)
-        argv = backend.call_args.args[0]
-        self.assertIn('--power-confirmed', argv)
-        self.assertNotIn('--battery-percent', argv)
-        self.assertIsNone(json.loads((self.root / 'power-confirmation.private.json').read_text())['battery_percent'])
+    def test_worker_keeps_confirmation_without_fake_battery_report_or_duplicate_file(self):
+        args = {'workspace': str(self.root / 'look'), 'power_confirmed': True, 'firmware': '2.01'}
+        obj=Mock();obj.root=Path(args['workspace'])
+        obj.run_direct.return_value={'mode':'fl23_enable','phase':'AWAITING_RELOAD'}
+        with patch('looktool.direct.DirectJob',return_value=obj), redirect_stdout(io.StringIO()) as output:
+            worker.run('direct_fl23_enable', args, self.root)
+        self.assertTrue(obj.run_direct.call_args.kwargs['power_confirmed'])
+        self.assertNotIn('Power:',output.getvalue())
+        self.assertFalse((self.root/'power-confirmation.private.json').exists())
 
     def test_missing_confirmation_stops_before_any_camera_dispatch(self):
         for action in jobs.POWER_ACTIONS:
@@ -181,26 +180,25 @@ class PowerProgressTests(unittest.TestCase):
             reload_popup.assert_not_called()
             process.return_value.start.assert_called_once()
 
-    def test_main_factory_button_routes_accounted_failure_to_continuation(self):
+    def test_main_factory_button_ignores_old_failure_and_starts_fresh(self):
         window = self.window()
         failed = self.root / 'original-failure'
         failed.mkdir()
         (failed / 'direct.private.json').write_text('{}')
         window.fields['factory_failed_work'].setText(str(failed))
-        # A second failed full reset must not replace the selected original.
+        # Both records remain evidence, not prerequisites for the new request.
         latest = self.root / 'second-attempt'
         latest.mkdir()
         (latest / 'direct.private.json').write_text('{"phase":"NEEDS_REVIEW","journal":[]}')
         window.settings['factory_direct_work'] = str(latest)
-        with patch('looktool.factoryrecover.pending', return_value=(failed.resolve(), {'phase': 'NEEDS_REVIEW'})), \
-             patch.object(W.QMessageBox, 'question', return_value=W.QMessageBox.Yes) as question, \
+        with patch.object(W.QMessageBox, 'question', return_value=W.QMessageBox.Yes) as question, \
              patch('desktopapp.window.QtCore.QProcess'):
             window.launch('direct_factory_reset', {'workspace': str(self.root / 'next'), 'firmware': '2.01'})
         request = json.loads((window.current_job / 'request.private.json').read_text())
-        self.assertEqual(request['action'], 'direct_resume_factory')
-        self.assertEqual(request['arguments']['failed_workspace'], str(failed.resolve()))
+        self.assertEqual(request['action'], 'direct_factory_reset')
+        self.assertNotIn('failed_workspace', request['arguments'])
         self.assertTrue(request['arguments']['power_confirmed'])
-        self.assertIn('已恢复的内容不重复写入', question.call_args.args[2])
+        self.assertIn('移除项目程序修改', question.call_args.args[2])
 
     def test_cancelling_auto_continuation_preserves_original_selection(self):
         window = self.window()
@@ -209,8 +207,7 @@ class PowerProgressTests(unittest.TestCase):
         (failed / 'direct.private.json').write_text('{}')
         window.fields['factory_failed_work'].setText(str(failed))
         window.settings['factory_direct_work'] = str(failed)
-        with patch('looktool.factoryrecover.pending', return_value=(failed.resolve(), {'phase': 'NEEDS_REVIEW'})), \
-             patch.object(W.QMessageBox, 'question', return_value=W.QMessageBox.Cancel), \
+        with patch.object(W.QMessageBox, 'question', return_value=W.QMessageBox.Cancel), \
              patch.object(jobs, 'new_job') as new_job:
             window.launch('direct_factory_reset', {'workspace': 'not-started'})
         new_job.assert_not_called()
@@ -223,10 +220,10 @@ class PowerProgressTests(unittest.TestCase):
         with patch('desktopapp.window.sys.platform', 'win32'):
             for choice, proceed in (('drivers', False), ('cancel', False), ('continue', True)):
                 with self.subTest(choice=choice), patch.object(window, 'ask_drivers_first', return_value=choice) as ask:
-                    window.nav.setCurrentRow(0)
+                    window.select_page(0)
                     self.assertEqual(window.drivers_first(args), proceed)
                     ask.assert_called_once()
-                    self.assertEqual(window.nav.currentRow(), 1 if choice == 'drivers' else 0)
+                    self.assertEqual(window.pages.currentIndex(), 1 if choice == 'drivers' else 0)
             # A verified connection, or an installation already in progress, is not asked again.
             with patch.object(window, 'ask_drivers_first') as ask:
                 window.settings['connection_verified'] = True
@@ -272,7 +269,7 @@ class PowerProgressTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, '没有旧备份恢复记录'):
             worker.run('restore_verify', {'workspace': str(self.root / 'unused-recovery')}, self.root)
 
-    def test_completed_continuation_is_verified_first_with_rewrite_fallback(self):
+    def test_completed_old_task_does_not_redirect_new_restore_to_verification(self):
         window = self.window()
         failed, completed = self.root / 'old-failure', self.root / 'completed'
         failed.mkdir(); completed.mkdir()
@@ -281,16 +278,13 @@ class PowerProgressTests(unittest.TestCase):
             'resume_from': str(failed), 'phase': 'AWAITING_RELOAD'}))
         window.settings['factory_direct_work'] = str(completed)
         window.fields['factory_failed_work'].setText(str(failed))
-        with patch('looktool.factoryrecover.pending', return_value=(completed.resolve(), {'phase': 'AWAITING_RELOAD'})), \
-             patch.object(W.QMessageBox, 'question', return_value=W.QMessageBox.Yes) as question, \
+        with patch.object(W.QMessageBox, 'question', return_value=W.QMessageBox.Yes) as question, \
              patch('desktopapp.window.QtCore.QProcess'):
             window.launch('direct_factory_reset', {'workspace': 'not-started'})
-        # The worker verifies the finished restore first and writes only if
-        # the camera changed since, so the power confirmation is required.
-        self.assertIn('先只读核对', question.call_args.args[2])
+        self.assertIn('移除项目程序修改', question.call_args.args[2])
         request = json.loads((window.current_job / 'request.private.json').read_text())
-        self.assertEqual(request['action'], 'direct_resume_factory')
-        self.assertEqual(request['arguments']['failed_workspace'], str(completed.resolve()))
+        self.assertEqual(request['action'], 'direct_factory_reset')
+        self.assertNotIn('failed_workspace', request['arguments'])
         self.assertTrue(request['arguments']['power_confirmed'])
 
     def test_restore_after_loaded_recovery_starts_fresh_write_not_old_verification(self):

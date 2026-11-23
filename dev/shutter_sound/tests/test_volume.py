@@ -48,15 +48,15 @@ def test_up_down_reset_use_original_pcm_and_preserve_camera_task(converted):
     assert (work/'sound.private.json').read_bytes()==state
 
 
-def test_loudness_cap_prevents_clipping_and_matches_saved_payload(converted):
+def test_gain_is_not_capped_and_clipped_preview_matches_saved_payload(converted):
     cli.volume_audio(converted,decibels=30)
     folder,report,preview=audio(converted)
-    assert report['volume_limited'] is True
-    assert report['peak_fraction']<=.951
+    assert report['volume_limited'] is False and report['volume_gain_db']==30
+    assert report['clipped_samples']>0
     assert max(map(abs,preview))<=32512
     assert native_codec.decode((folder/'custom-native.private.bin').read_bytes())[:len(preview)]==preview
     cli.volume_audio(converted,decibels=-3)
-    assert audio(converted)[1]['peak_fraction']<.68
+    assert audio(converted)[1]['volume_gain_db']==27
 
 
 def test_failed_gain_keeps_previous_selection_and_removes_partial_folder(converted):
@@ -69,7 +69,8 @@ def test_failed_gain_keeps_previous_selection_and_removes_partial_folder(convert
 
 
 def test_cli_and_desktop_volume_need_no_backup_or_camera(converted):
-    from desktopapp import worker,jobs,macadmin
+    from desktopapp import worker,jobs
+    from desktopapp.platforms import macos_authorization as macadmin
     with patch.object(cli,'workspace',side_effect=AssertionError('No camera workspace')):
         result=worker.run('sound_volume',{'workspace':str(converted),'decibels':3},converted)
         assert result['volume_gain_db']==3 and result['camera_io'] is False

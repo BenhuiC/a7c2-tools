@@ -12,6 +12,8 @@ from desktopapp.window import Window
 
 @pytest.fixture
 def pending_window(tmp_path,monkeypatch):
+    import sys
+    monkeypatch.setattr(sys,'argv',[*sys.argv,'--legacy-usb'])
     app=W.QApplication.instance() or W.QApplication([])
     monkeypatch.setenv('A7C2_DESKTOP_DATA',str(tmp_path/'app'))
     window=Window();window.timer.stop()
@@ -29,7 +31,10 @@ def finish(window,work,phase,action='direct_factory_reset',success=True,error='n
     window.current_job=jobs.new_job(action,{})
     (window.current_job/'status.private.json').write_text(json.dumps(dict(
         phase='SUCCEEDED' if success else 'FAILED',action=action,error=error,
-        result=dict(workspace=str(work),mode='factory_reset',phase=phase))))
+        result=dict(workspace=str(work),mode='factory_reset',phase=phase,
+            recovery_complete=phase in ('LOADED','COMPLETE'),
+            verification_required=phase=='AWAITING_RELOAD',
+            private_sound_files_removed=phase in ('LOADED','COMPLETE')))))
     window.process=Mock()
     window.finished(0 if success else 2,None)
 
@@ -40,7 +45,7 @@ def test_written_recovery_is_70_percent_and_requires_reboot_verification(pending
         finish(window,work,'AWAITING_RELOAD')
     assert window.progress.value()==70
     assert '恢复尚未完成' in window.status.text()
-    assert '重启后核对并完成恢复'==window.factory_button.text()
+    assert window.factory_button.text()=='继续完成一键恢复'
     assert '尚未完成' in window.factory_status.text()
     popup.assert_called_once_with(setup=False,mode='factory_reset')
     assert not window.factory_accept.isChecked()
@@ -48,13 +53,13 @@ def test_written_recovery_is_70_percent_and_requires_reboot_verification(pending
 
 def test_only_verified_recovery_reaches_100_percent(pending_window):
     window,work,state=pending_window
-    state.update(phase='LOADED',readonly_after_reload_verified=True)
+    state.update(phase='LOADED',readonly_after_reload_verified=True,private_sound_files_removed=True)
     (work/'direct.private.json').write_text(json.dumps(state))
     with patch.object(window,'show_reload_guide') as popup:
         finish(window,work,'LOADED','direct_verify')
     assert window.progress.value()==100
     assert '核对通过' in window.status.text()
-    assert '核对已通过' in window.factory_status.text()
+    assert '已完成' in window.factory_status.text()
     assert not window.factory_accept.isChecked()
     popup.assert_not_called()
 
@@ -64,12 +69,12 @@ def test_failed_verify_keeps_pending_state(pending_window):
     finish(window,work,'AWAITING_RELOAD','direct_verify',False)
     assert window.progress.value()==0
     assert '尚未完成' in window.factory_status.text()
-    assert window.factory_button.text()=='重启后核对并完成恢复'
+    assert window.factory_button.text()=='继续完成一键恢复'
 
 
 def test_restart_dialog_explicitly_requires_followup_check():
     text=reloadguide.text(mode='factory_reset')
-    for phrase in ('恢复尚未完成','必须重启后核对','至少等待 1 分钟','接回 USB','重启后核对并完成恢复','只有核对通过'):
+    for phrase in ('恢复尚未完成','必须重启后核对','至少等待 1 分钟','接回 USB','继续完成一键恢复','只有核对通过'):
         assert phrase in text
 
 
@@ -125,54 +130,7 @@ def test_existing_recovery_startup_uses_real_app_entry_without_pytest_module_pat
     import sys
     from desktopapp.paths import ROOT
     result=run([sys.executable,str(ROOT/'desktop.py')],cases=('factory_connection_failed',))
-    assert result['cases']['factory_connection_failed']['pages']==7
-
-
-def temporary_conflict_state():
-    # Diagnostic (21): runtime and vertical probes completed, alias stage did
-    # not start because a shared name worker already existed on the camera.
-    journal=[]
-    for prefix,stage in (('', 'checkpoint.staged.so'),('vertical_', 'lut-runtime-staged.so')):
-        journal.extend(dict(event=prefix+kind,stage=stage,mode=0) for kind in
-                       ('native_stage_intent','native_intent','native_result_verified','native_cleanup_verified'))
-    return dict(mode='factory_reset',phase='NEEDS_REVIEW',failed_during='PLANNED',
-                identity=dict(model='ILCE-7CM2',serial_sha256='test-body'),journal=journal,
-                error='Existing temporary state needs recovery: lut-names-staged.so')
-
-
-def test_diagnostic21_offers_prewrite_restart_without_claiming_recovery_complete(pending_window):
-    from desktopapp.paths import write_json
-    from looktool.factoryrecover import pending
-    window,work,_=pending_window
-    state=temporary_conflict_state()
-    write_json(work/'direct.private.json',state)
-    original=(work/'direct.private.json').read_bytes()
-    with patch.object(window,'show_reload_guide') as popup:
-        finish(window,work,'NEEDS_REVIEW',success=False,error=state['error'])
-    popup.assert_called_once_with(mode='factory_prewrite_temporary')
-    assert window.progress.value()==0
-    assert window.factory_button.text()=='断电后重试恢复（本次尚未写入）'
-    assert '本次恢复尚未写入' in window.status.text()
-    assert (work/'direct.private.json').read_bytes()==original
-    assert pending(work.parent,work) is None  # Next click plans a fresh restore.
-
-
-@pytest.mark.parametrize('change', ['write','unclean','resume','writing_phase','active_plugin'])
-def test_unknown_or_started_recovery_never_gets_prewrite_retry_advice(change):
-    from looktool.factoryrecover import prewrite_temporary_conflict
-    state=temporary_conflict_state()
-    if change=='write':state['journal'].append(dict(event='native_intent',mode=1))
-    elif change=='unclean':state['journal'].pop()
-    elif change=='resume':state['resume_from']='previous-restore'
-    elif change=='writing_phase':state['failed_during']='WRITING'
-    elif change=='active_plugin':state['error']='Existing temporary state needs recovery: libJit.so'
-    assert not prewrite_temporary_conflict(state)
-
-
-def test_temporary_conflict_guidance_requires_restart_then_retry_not_verify():
-    text=reloadguide.text(mode='factory_prewrite_temporary')
-    for phrase in ('尚未开始写入','至少等待 1 分钟','接回 USB','断电后重试恢复','不需要旧 LUT 任务'):
-        assert phrase in text
+    assert result['cases']['factory_connection_failed']['pages']==12
 
 
 def test_finished_restore_writes_retire_old_sound_records_before_verification(pending_window):

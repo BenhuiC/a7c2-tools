@@ -10,7 +10,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from desktopapp import drivers, jobs, worker
+from desktopapp import jobs, worker
+from desktopapp.platforms import usb_drivers as drivers
 
 
 class IntegrationTests(unittest.TestCase):
@@ -32,9 +33,13 @@ class IntegrationTests(unittest.TestCase):
             drivers.driver_arguments('installer', '1234', self.root)
 
     def test_windows_scan_retains_native_query_error_without_powershell(self):
+        import libusb_package
+        import usb.backend.libusb1
         with patch.object(drivers.sys, 'platform', 'win32'), \
+             patch.object(drivers.platform, 'machine', return_value='AMD64'), \
              patch('desktopapp.platforms.windows_pnp.devices',side_effect=OSError('native-query-error')), \
              patch.object(drivers.subprocess,'run') as subprocess_run, \
+             patch('usb.backend.libusb1.get_backend', return_value=object()), \
              patch('usb.core.find', return_value=[]):
             result = drivers.scan()
         self.assertEqual(result['errors'][0]['stage'],'windows-pnp')
@@ -51,7 +56,7 @@ class IntegrationTests(unittest.TestCase):
 
     def test_two_stage_driver_setup_has_one_session_no_auth_retry(self):
         events = []
-        transport = SimpleNamespace(SERVICE_DRIVER_SETUP=None)
+        transport = SimpleNamespace(SERVICE_DRIVER_SETUP=None,wait_normal_return=lambda:True)
         @contextmanager
         def camera():
             events.append('first-auth')
@@ -60,6 +65,8 @@ class IntegrationTests(unittest.TestCase):
             yield SimpleNamespace(identity={'model': 'ILCE-7CM2'})
             events.append('end')
         with patch.object(drivers.sys, 'platform', 'win32'), \
+             patch.object(drivers,'is_admin',return_value=True), \
+             patch.object(drivers,'installer',return_value=self.root/'wdi-simple.exe'), \
              patch.object(drivers, 'install', side_effect=lambda args, job, **kw: events.append(args['pid'])), \
              patch.object(drivers, 'scan', return_value={'devices': [{'id': 'USB\\VID_054C&PID_0336'}]}), \
              patch('looktool.devicesession.modules', return_value=(transport, None)), \
@@ -159,14 +166,13 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(settings['worker_prefix'],['--raw-profile-worker'])
         self.assertTrue(Path(settings['exiftool']).is_file())
 
-    def test_factory_verification_discovers_successful_operator_continuation(self):
+    def test_factory_verification_uses_only_explicitly_selected_record(self):
         from unittest.mock import Mock
         obj=Mock();obj.root=self.root/'actual-completed'
-        obj.state_path=self.root/'state';obj.state_path.write_text('{"mode":"factory_reset","factory_path":"builtin"}')
+        obj.state_path=self.root/'state';obj.state_path.write_text('{"mode":"factory_reset","factory_path":"builtin","phase":"AWAITING_RELOAD"}')
         obj.verify_direct.return_value={'phase':'LOADED','mode':'factory_reset'}
-        args={'workspace':'obsolete-failed-attempt','factory_verify':True,'accepted':False}
-        with patch('looktool.factoryrecover.pending',return_value=(obj.root,{'phase':'AWAITING_RELOAD'})), \
-             patch('looktool.direct.DirectJob',return_value=obj),patch('desktopapp.official.load',return_value={}):
+        args={'workspace':str(obj.root),'factory_verify':True,'accepted':False}
+        with patch('looktool.direct.DirectJob',return_value=obj),patch('desktopapp.official.prepare_restore',return_value=({},'local-reference',None)):
             result=worker.run('direct_verify',args,self.root)
         self.assertEqual(result['workspace'],str(obj.root))
         obj.verify_direct.assert_called_once()
@@ -180,7 +186,7 @@ class IntegrationTests(unittest.TestCase):
             readonly_after_reload_verified=True,physical_checks_accepted=False))
         obj=Mock();obj.root=self.root/'fresh-recovery'
         obj.run_direct.return_value=dict(mode='factory_reset',phase='AWAITING_RELOAD')
-        with patch('looktool.direct.DirectJob',return_value=obj),patch('desktopapp.official.load',return_value={}):
+        with patch('looktool.direct.DirectJob',return_value=obj),patch('desktopapp.official.prepare_restore',return_value=({},'local-reference',None)):
             result=worker.run('direct_factory_reset',dict(workspace=str(obj.root),firmware='2.01',
                 power_confirmed=True,failed_workspace=str(prior)),self.root)
         obj.verify_direct.assert_not_called();obj.continue_factory.assert_not_called()
@@ -242,19 +248,6 @@ class IntegrationTests(unittest.TestCase):
             result=worker.run('sound_install',dict(workspace=str(self.root/'sound'),backup=str(self.root/'backup'),
                 firmware='2.01',power_confirmed=True),self.root)
         self.assertEqual(result['phase'],'installed_cold_test_pending')
-
-    def test_slot_restore_tracks_fresh_transaction_for_reload_verification(self):
-        def invoke(argv):
-            self.assertEqual(argv[:2], ['restore-slot', 'original-job'])
-            work = Path(argv[argv.index('--work-dir') + 1])
-            work.mkdir(parents=True)
-            (work / 'job.private.json').write_text(json.dumps({'phase': 'RESTORED_AWAITING_RELOAD'}))
-            return 0
-        with patch('looktool.devicecli.main', side_effect=invoke):
-            result = worker.run('look_restore', dict(workspace='original-job', battery=100, backup=str(self.root / 'backup')), self.root)
-        self.assertNotEqual(result['workspace'], 'original-job')
-        self.assertEqual(result['phase'], 'RESTORED_AWAITING_RELOAD')
-
 
     def test_lut_write_publishes_profile_binding_without_separate_verify(self):
         result=dict(phase='AWAITING_RELOAD',mode='install_all',job_id='test-profile-write',

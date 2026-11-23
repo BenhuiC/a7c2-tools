@@ -1,10 +1,32 @@
 """Connection notice only; importing/showing it never accesses a camera."""
 
 TITLE = '连接相机前，请先了解这条提示'
+
+
+def completion(action,result):
+    """Explain the camera restart after the explicit driver step has ended."""
+    if action not in ('driver_install','usb_prepare','driver_uninstall'):return None
+    if action=='driver_install' and not result.get('driver_changed'):return None
+    if action=='driver_uninstall':
+        return '驱动卸载步骤已结束',result.get('next_step','请按日志完成重新连接。')
+    title='驱动准备结束，请将相机断电重开'
+    step=('第一阶段 0E8A 驱动已安装。' if action=='driver_install' and result.get('pid')=='0e8a' else
+          '所选身份的驱动已安装。' if action=='driver_install' else '两阶段驱动与服务连接已经检查完成。')
+    return title,(step+'本步骤没有写入相机固件。\n\n'
+        '1. 确认当前任务已结束，拔掉 USB 和外部供电。\n'
+        '2. 将相机关机，等屏幕和存取灯完全熄灭。\n'
+        '3. 取下电池至少 1 分钟，再装回开机。\n'
+        '4. 选择海量存储模式，接回 USB。\n\n'
+        '只装完 0E8A 时，接下来点“准备两阶段驱动并测试连接”；0336 出现后软件自动安装，'
+        '不要同时操作 Zadig 或在设备管理器抢点安装。完成两阶段检查后再进入后续功能。')
+
+
 TEXT = (
     '使用本工具连接相机或切换驱动时，相机显示“请检查所连接的设备”属于正常现象。\n\n'
     '此时电脑可能不显示相机盘符。不要仅凭相机这条提示判断连接失败，'
     '请查看本工具的进度和完整日志；是否成功以工具的实际结果为准。\n\n'
+    'Windows 的“两阶段驱动”会先准备管理员权限和安装器，再切换相机模式；0336 出现后自动处理驱动，'
+    '安装完成后会重新等待接口，无需到设备管理器抢时间更新。\n\n'
     'macOS 相机操作会打开「终端」窗口，用 sudo 接管 USB；请在终端中输入 Mac 登录密码。程序不读取或保存密码，'
     '输入密码前关闭窗口不会开始相机操作；操作开始后请等待完成，不要关机或拔线。\n\n'
     '请使用海量存储（Mass Storage）模式，并保持 USB 和供电稳定。'

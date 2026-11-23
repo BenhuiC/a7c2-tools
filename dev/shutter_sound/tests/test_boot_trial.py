@@ -18,7 +18,7 @@ class BootTrialOrderingTests(unittest.TestCase):
             identity = {'model': 'ILCE-7CM2', 'serial_sha256': 'synthetic'}
             payload = bytes(64)
             for path, value in ((native, {'identity': identity}),
-                                (audio, {'identity': identity, 'wire_format': 0, 'owner_audio_correct': True})):
+                                (audio, {'identity': identity, 'wire_format': 0})):
                 path.mkdir()
                 (path / 'job.private.json').write_text(json.dumps(value))
             (audio / 'payload.private.bin').write_bytes(payload)

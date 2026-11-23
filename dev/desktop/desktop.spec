@@ -1,60 +1,88 @@
 from pathlib import Path
+import os
 import sys
 from PyInstaller.utils.hooks import collect_all
 
 root = Path(SPECPATH).parents[1]
 sys.path.insert(0,str(root/'dev/desktop'))
-from profilepack import files as profile_files
+from profilepack import files as profile_files, default_files, install_files
 version = {}
 exec((root / 'src/desktopapp/__init__.py').read_text(encoding='utf-8'), version)
 for slot in range(1, 7):
     path = root / 'desktop-assets/presets/default-six-v1' / ('slot%d.a7look' % slot)
     if not path.is_file():
         raise FileNotFoundError('Prepare the six-look distribution pack first: ' + str(path))
-datas, binaries, hidden = [], [], ['PySide6.QtCore', 'PySide6.QtGui', 'PySide6.QtWidgets',
+for name in ('dropbear','password.hash','dropbear-LICENSE.txt'):
+    path=root/'desktop-assets/ssh'/name
+    if not path.is_file():raise FileNotFoundError('Prepare camera SSH distribution assets before packaging: '+str(path))
+datas, binaries, hidden = [], [], ['PySide6.QtCore', 'PySide6.QtGui', 'PySide6.QtWidgets', 'PySide6.QtMultimedia',
                                  'tarfile', 'lzma', 'bz2', 'zlib', 'urllib.request', 'wave', 'plistlib', 'backports.tarfile', 'zipfile', 'filecmp']
 if sys.platform=='darwin':hidden.append('pwd')
+if sys.platform=='darwin':
+    for name in ('debugfs','e2fsck'):
+        program=root/'src/desktopapp/assets/image-tools'/name
+        if not program.is_file():raise FileNotFoundError('Prepare native macOS e2fsprogs: '+str(program))
+        binaries.append((str(program),'src/desktopapp/assets/image-tools'))
 for package in ('numpy', 'scipy', 'PIL', 'tifffile', 'yaml', 'elftools', 'usb',
-                'libusb_package', 'Cryptodome', 'imageio_ffmpeg', 'ziglang', 'keystone', 'capstone', 'unicorn'):
+                'libusb_package', 'Cryptodome', 'imageio_ffmpeg', 'ziglang', 'keystone', 'capstone', 'unicorn',
+                'paramiko','cryptography','bcrypt','nacl','torch','threadpoolctl'):
     d, b, h = collect_all(package)
     datas.extend(d)
     binaries.extend(b)
     hidden.extend(h)
 
+# The owner requested an application signing identity; keep it outside Git and
+# add it only to this local distribution. It is never placed in camera images.
+sys.path.insert(0,str(root/'src'))
+from desktopapp.identity import ensure_signing
+identity_dir=Path(os.environ.get('A7C2_DISTRIBUTION_IDENTITY',str(root.parent/'application-identity')))
+for identity_file in ensure_signing(identity_dir):datas.append((str(identity_file),'desktop-assets/identity'))
+
 # Source keeps original __file__-relative native headers and asset paths.
 for folder in ('src/desktopapp', 'src/camera_runtime', 'src/looks/looktool',
-               'src/looks/assets', 'src/looks/native', 'src/fl23/native', 'src/fl23/assets',
-               'src/vertical', 'src/shutter_sound', 'plugins', 'desktop-assets'):
+               'src/looks/assets', 'src/looks/licenses', 'src/looks/native', 'src/fl23/native', 'src/fl23/assets',
+               'src/fl23/vendor', 'src/fl23/licenses',
+               'src/vertical', 'src/shutter_sound', 'src/camera_api', 'plugins', 'desktop-assets', 'dev/ssh', 'dev/firmware'):
     for source in (root / folder).rglob('*'):
         relative = source.relative_to(root)
         if relative.parts[:2]==('desktop-assets','profile-library-v1'):continue
-        if not source.is_file() or any(p in ('__pycache__', 'tests') for p in relative.parts):
+        if relative.parts[:2]==('desktop-assets','creative-look-library-v2'):continue
+        if relative.parts[:2]==('desktop-assets','presets'):continue
+        if sys.platform=='darwin' and relative.parts[:4]==('src','desktopapp','assets','image-tools'):continue
+        if not source.is_file() or any(p in ('__pycache__', 'tests') for p in relative.parts) or source.name.startswith('test_'):
             continue
         if sys.platform == 'darwin' and (relative.parts[:2] == ('desktop-assets', 'windows') or source.suffix.lower() in ('.exe', '.dll', '.pyd', '.bat', '.cmd')):
             continue
-        if source.suffix.lower()=='.dcp' and relative.parts[:2]!=('desktop-assets','profile-library-v1'):
+        if source.suffix.lower()=='.dcp' and relative.parts[:2]!=('desktop-assets','profile-library-v1') and relative.as_posix()!='src/looks/assets/cube-dcp-base.dcp':
             continue
         if '.private.' in source.name or source.suffix.lower() in ('.arw', '.hif', '.jpg', '.cube', '.pyc'):
             continue
         datas.append((str(source), str(relative.parent)))
-for relative,source in profile_files().items():
-    datas.append((str(source),str(Path('desktop-assets/profile-library-v1')/Path(relative).parent)))
+for relative,source in install_files().items():
+    folder='desktop-assets/presets/default-six-v1' if sys.platform=='darwin' else 'desktop-assets/profile-library-v1'
+    datas.append((str(source),str(Path(folder)/Path(relative).parent)))
 for name in ('desktop.py', 'LICENSE', 'README.md', 'README.zh-CN.md', 'desktop-requirements.txt',
-             'dev/desktop/offline_smoke.py', 'docs/en/lut-formats.md', 'docs/zh-CN/lut-formats.md',
+             'dev/desktop/macos_release_smoke.py',
+             'dev/desktop/offline_smoke.py', 'dev/desktop/color_smoke.py', 'dev/desktop/m4_portrait_smoke.py', 'dev/desktop/install_pack_smoke.py', 'dev/desktop/output_directory_smoke.py', 'dev/desktop/native_firmware_smoke.py', 'dev/desktop/card_smoke.py', 'dev/desktop/card_activation_smoke.py', 'dev/desktop/card_flow_smoke.py', 'docs/en/lut-formats.md', 'docs/zh-CN/lut-formats.md',
              'docs/en/notices.md', 'docs/zh-CN/notices.md', 'docs/licenses/a7c2-fl23-macos-MIT.txt',
              'docs/licenses/project-legacy-MIT.txt',
              'calibration/a7c2-2.01.virtual.npz'):
     datas.append((str(root / name), str(Path(name).parent)))
 
-a = Analysis([str(root / 'dev/desktop/frozen_entry.py')], pathex=[],
+entry = root / 'dev/desktop/frozen_entry.py'
+if os.environ.get('A7C2_BUILD_PREVIEW_GATE_TRIAL') == '1':
+    datas.append((str(entry), 'dev/desktop'))
+    entry = root / 'dev/desktop/preview_gate_entry.py'
+a = Analysis([str(entry)], pathex=[],
              binaries=binaries, datas=datas, hiddenimports=hidden,
              excludes=['tkinter', 'matplotlib', 'pandas', 'IPython', 'pytest'])
 pyz = PYZ(a.pure)
 exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name='A7C2Tools',
-          console=False, disable_windowed_traceback=False)
+          console=False, disable_windowed_traceback=False,
+          icon=str(root/'src/desktopapp/assets/mark.ico'))
 collection = COLLECT(exe, a.binaries, a.datas, name='A7C2Tools')
 if sys.platform == 'darwin':
-    app = BUNDLE(collection, name='A7C2Tools.app', bundle_identifier='io.github.QAQLeonard.A7C2Tools',
+    app = BUNDLE(collection, name='A7C2Tools.app', icon=str(root/'src/desktopapp/assets/mark.png'), bundle_identifier='io.github.QAQLeonard.A7C2Tools',
                  info_plist={'CFBundleShortVersionString': version['VERSION'],
                              'CFBundleVersion': version['VERSION'].rsplit('.', 1)[-1],
                              'LSMinimumSystemVersion': '14.0',

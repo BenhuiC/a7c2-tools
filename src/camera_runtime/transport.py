@@ -18,6 +18,15 @@ class SenserProtocolError(RuntimeError):
     """The reply cannot be associated with the current request."""
 
 
+class JiritsuError(RuntimeError):
+    """A complete file-command reply reported a camera-side failure."""
+    def __init__(self,status,command,mode=None):
+        self.jiritsu_status=status
+        self.command=command
+        self.request_mode=mode
+        super().__init__(f'Jiritsu 狀態 {status:#x}')
+
+
 class SonySenserDevice(PmcaSenserDevice):
     """Use length-delimited reads, finishing direct CP unit reads explicitly.
 
@@ -135,6 +144,7 @@ class SonyBusyFailure(DiagnosticUsbFailure): pass
 # Optional desktop-only driver preparation between the two enumerations.
 # CLI sessions leave it unset; it never retries authentication or firmware I/O.
 SERVICE_DRIVER_SETUP = None
+SERVICE_DRIVER_PRESENT = None
 READY_WAIT=30
 SONY_BUSY_WAIT=10
 POLL_INTERVAL=1
@@ -261,7 +271,7 @@ def service_identity(snapshot,model):
 # never as 0336 (field logs 28 and 30, 12-15 s after the previous exit).
 SERVICE_COOLDOWN=30
 SERVICE_ATTEMPTS=3
-SERVICE_WAIT=20
+SERVICE_WAIT=120
 _service_exit=None  # monotonic time the last service session ended in this process
 
 
@@ -278,19 +288,47 @@ def _sony_pids():
     return ['%04x'%d.idProduct for d in usb.core.find(find_all=True,idVendor=0x054c,backend=backend)]
 
 
+def wait_normal_return(seconds=10):
+    """Observe the return to normal USB; a swallowed stop error is not proof."""
+    deadline=time.monotonic()+seconds
+    while True:
+        try:pids=_sony_pids()
+        except usb.core.USBError as exc:
+            if getattr(exc,'backend_error_code',None)!=-4:raise
+            pids=[]
+        if '0e8a' in pids and '0336' not in pids:return True
+        if time.monotonic()>=deadline:return False
+        time.sleep(.25)
+
+
 def _wait_for(pid,seconds,seen,prepare=None):
     """Enumerate only; record every Sony identity seen while waiting."""
-    deadline=time.monotonic()+seconds
+    started=time.monotonic()
+    deadline=started+seconds
     prepared=False
+    last=None
     while True:
-        for found in _sony_pids():
+        current=_sony_pids()
+        if current!=last:
+            print('USB 身份：'+(', '.join('054C:'+p.upper() for p in current) or '未出现')+
+                  f'；正在等待 {pid:04X}；阶段经过 {time.monotonic()-started:.1f} 秒',flush=True)
+            last=current
+        for found in current:
             if found not in seen:seen.append(found)
-        if prepare is not None and not prepared and '%04x'%pid in seen:
-            prepare();prepared=True
+        if prepare is not None and not prepared:
+            present=SERVICE_DRIVER_PRESENT() if SERVICE_DRIVER_PRESENT is not None else False
+            if present or (SERVICE_DRIVER_PRESENT is None and '%04x'%pid in current):
+                if '%04x'%pid not in seen:seen.append('%04x'%pid)
+                prepare();prepared=True
+                # Driver installation/UAC must not consume the interface's
+                # re-enumeration budget. Re-open the new device, not a stale handle.
+                deadline=time.monotonic()+seconds
         try:return get_device(pid)
-        except RuntimeError:
-            if time.monotonic()>=deadline:return None
-            time.sleep(.5)
+        except usb.core.USBError as exc:
+            if getattr(exc,'backend_error_code',None)!=-4:raise
+        except RuntimeError:pass
+        if time.monotonic()>=deadline:return None
+        time.sleep(.5)
 
 
 def _rescue_service():
@@ -310,12 +348,19 @@ def _rescue_service():
         try:auth.start();auth.authenticate()
         except Exception:pass
         auth.stop()
-        print('只读通信出错后，已让相机退出服务模式（未写入相机）。',flush=True)
-        return True
+        # stop() in the vendored protocol intentionally ignores USB errors.
+        # Only observed re-enumeration can establish a successful exit.
+        usb.util.dispose_resources(dev);dev=None
+        if wait_normal_return():
+            print('只读通信出错后，已确认相机回到普通 USB 身份（未写入相机）。',flush=True)
+            return True
+        print('退出服务模式的请求已结束，但未确认回到 0E8A；请保留日志，按提示断电重开，不重复认证。',flush=True)
+        return False
     except Exception as exc:
         print('相机未能自动退出服务模式（%s）；请拔 USB、取电池约 1 分钟后重开。'%exc,flush=True)
         return False
-    finally:usb.util.dispose_resources(dev)
+    finally:
+        if dev is not None:usb.util.dispose_resources(dev)
 
 
 class Session:
@@ -408,7 +453,7 @@ class Session:
         if response or len(out)<4:raise RuntimeError('Jiritsu 回應格式錯誤')
         status=struct.unpack_from('<I',out)[0]
         if missing and status==0x10000006:return None
-        if status:raise RuntimeError(f'Jiritsu 狀態 {status:#x}')
+        if status:raise JiritsuError(status,cmd,data[0] if data else None)
         return out[4:]
     def select(self,path):
         if not path.startswith('/tmp/jiritsu/') or '\0' in path or len(path)>510:raise ValueError('路徑不符')
