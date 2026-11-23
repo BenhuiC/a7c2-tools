@@ -52,7 +52,7 @@
 | **A6700** | [xyzhangxin/sony-a6700-powerful](https://github.com/xyzhangxin/sony-a6700-powerful) | Powerful6700 功能工具、自定义快门声音、USB 维护协议及 Pico／Fastboot 备份研究。 |
 | **A7 V** | [751K/sony-a7m5-looks · Sony Look Bridge](https://github.com/751K/sony-a7m5-looks) | 照片显影与创意外观的后期配置文件、S-Log3 视频 LUT、DCTL 及 ARW 解码研究，涵盖多款索尼机型。 |
 
-**交流群：**[Telegram（推荐）](https://t.me/sonyfwlab) · [Discord](https://discord.gg/SwPdfSd9c)
+**交流群：**[Telegram（推荐）](https://t.me/sonyfwlab)
 **作者：**小红书 [QAQLeonard（读研版）](https://www.xiaohongshu.com/user/profile/660501f7000000000600d03c) · 抖音 **LeonardZ**（抖音号 `90860261487`）
 
 > [!IMPORTANT]
