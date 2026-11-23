@@ -6,9 +6,9 @@
 
 ## 3.10 打包更新 · 2026-11-23
 
-本次 3.10 发布候选同步 Windows 与 Apple Silicon Mac 工具、默认六款带图标外观、现用 LUT／DCP 转换、原生固件镜像编辑和统一机内 API。Mac 向导没有安装驱动步骤。自定义快门声音按快门组分配：机械一块、电子一块，同一素材双选也使用两块；机械各变体共用机械块。机主的三项单张拍摄 RAM 听感测试通过；持久保存声音后实体冷启动仍待验收，打包检查不代替该结论。普通发行版不启用预拍摄。
+本次 3.10 预发行版同步 Windows 与 Apple Silicon Mac 工具、默认六款带图标外观、现用 LUT／DCP 转换、原生固件镜像编辑和统一机内 API。Mac 向导没有安装驱动步骤。自定义快门声音按快门组分配：机械一块、电子一块，同一素材双选也使用两块；机械各变体共用机械块。机主的三项单张拍摄 RAM 听感测试通过；持久保存声音后实体冷启动仍待验收，打包检查不代替该结论。普通发行版不启用预拍摄。
 
-源码合入和 GitHub Release 正在准备，尚未替换已公开发行版。
+下载 [3.10 预发行版](https://github.com/QAQLeonard/a7c2-tools/releases/tag/v3.10)：Windows x64 与 Apple Silicon macOS 14+。默认六款采用平均ΔE00／原生参数优先拟合，理光两款使用本任务Adobe／Cobalt／C2新参考独立训练；模型验证不等于实机色彩验收。
 
 ## 当前分支与交付 · 2026-11-23
 
@@ -16,7 +16,7 @@
 | --- | --- |
 | [`main`](https://github.com/QAQLeonard/a7c2-tools/tree/main) | 已发布版本源码与用户说明。 |
 | [`dev`](https://github.com/QAQLeonard/a7c2-tools/tree/dev) | 当前 **3.10** 开发代码：本地固件生成、静态外观数据区、名称／图标及 A7Look＋DCP 双格式输出。 |
-| [下载](https://github.com/QAQLeonard/a7c2-tools/releases) | 当前公开 Release 仍为 **v3.0.3**；已准备的 3.10 包尚未发布为 Release。 |
+| [下载](https://github.com/QAQLeonard/a7c2-tools/releases) | 当前预发行版：**[v3.10](https://github.com/QAQLeonard/a7c2-tools/releases/tag/v3.10)**，提供Windows与Apple Silicon Mac包。 |
 | [索尼云创](https://sony.leonardsaikou.top) | 外观与声音社区，网页已使用新的蓝白云形 Logo。 |
 
 **版本保持 3.10。**该版 Windows 仅带默认六款可刷入、带图标的外观：**Fujifilm Classic
@@ -142,7 +142,7 @@ CP 内存重载或名称／图标缓存刷新。完整实机卡刷、冷启动�
 | **Windows 10／11 x64** | [Releases](https://github.com/QAQLeonard/a7c2-tools/releases) 中的 `A7C2Tools-Windows-x64.zip` | 整包解压后运行 `A7C2Tools.exe`。`_internal` 和 `Profiles` 文件夹要和它放在一起，不要单独拷出 EXE。不需要另装 Python。 |
 | **macOS 14+（Apple Silicon）** | [Releases](https://github.com/QAQLeonard/a7c2-tools/releases) 中的 `A7C2Tools-macOS-arm64.dmg` | 把 APP 拖进“应用程序”再打开。没有开发者签名，首次打开需在“系统设置 → 隐私与安全性”中允许。不提供 Intel 版。**Mac 实机 USB 尚未验证。** |
 
-版本固定为 **3.10**。Windows 只带 **六份可刷入、带图标的 `.a7look`**，每款只放一份，不内嵌 RAW 参考或附送配对 DCP；完整 41 对仍单独供索尼云创分发。本次未新构建 macOS DMG。
+版本固定为 **3.10**。Windows 只带 **六份可刷入、带图标的 `.a7look`**，每款只放一份，不内嵌 RAW 参考或附送配对 DCP；完整 41 对仍单独供索尼云创分发。当前3.10预发行版同时提供重新打包的Apple Silicon macOS DMG。
 - **Windows**：在 EXE 旁边的 `Profiles` 文件夹里。
 - Windows 固件生成使用包内本地工具，无需另装 WSL、Ubuntu 或 Python。所选保存目录直接使用，同名构建产物覆盖。
 - **macOS**：在 APP 内部。在软件的“自定义创意外观”页点 **打开内置 DCP／A7Look 配对库** 就能打开。

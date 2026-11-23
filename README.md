@@ -6,9 +6,9 @@
 
 ## 3.10 package update · 2026-11-23
 
-The 3.10 release candidate includes the current Windows and Apple Silicon Mac tools, six default icon-bearing looks, current LUT/DCP conversion, native firmware-image editing and the unified camera API. macOS has no driver-installation step. Custom shutter audio uses one buffer per shutter group: mechanical and electronic use two separate buffers even for the same clip; mechanical variants share their group buffer. The three single-shot RAM listening cases passed on the owner's camera. Persistent audio saving followed by a physical cold start remains unqualified; do not interpret package checks as that acceptance. Pre-capture stays outside the ordinary release.
+The 3.10 prerelease includes the current Windows and Apple Silicon Mac tools, six default icon-bearing looks, current LUT/DCP conversion, native firmware-image editing and the unified camera API. macOS has no driver-installation step. Custom shutter audio uses one buffer per shutter group: mechanical and electronic use two separate buffers even for the same clip; mechanical variants share their group buffer. The three single-shot RAM listening cases passed on the owner's camera. Persistent audio saving followed by a physical cold start remains unqualified; do not interpret package checks as that acceptance. Pre-capture stays outside the ordinary release.
 
-Source integration and the GitHub Release are being prepared; no published release has been replaced.
+Download the [3.10 prerelease](https://github.com/QAQLeonard/a7c2-tools/releases/tag/v3.10): Windows x64 and Apple Silicon macOS 14+. The six default looks use the mean-DE00 native-first fitter; the two Ricoh defaults use our new Adobe/Cobalt/C2 reference. Color-model validation is separate from camera acceptance.
 
 ## Current branches and delivery · 2026-11-23
 
@@ -16,7 +16,7 @@ Source integration and the GitHub Release are being prepared; no published relea
 | --- | --- |
 | [`main`](https://github.com/QAQLeonard/a7c2-tools/tree/main) | Published-version source and user documentation. |
 | [`dev`](https://github.com/QAQLeonard/a7c2-tools/tree/dev) | Current **3.10** development code: local firmware generation, static look storage, icon/name support and paired A7Look/DCP export. |
-| [Downloads](https://github.com/QAQLeonard/a7c2-tools/releases) | The latest published Release is **v3.0.3**. The prepared 3.10 packages have not been published as a Release. |
+| [Downloads](https://github.com/QAQLeonard/a7c2-tools/releases) | Current prerelease: **[v3.10](https://github.com/QAQLeonard/a7c2-tools/releases/tag/v3.10)**, with Windows and Apple Silicon Mac packages. |
 | [Sony Imaging Cloud](https://sony.leonardsaikou.top) | Community looks and sounds; the website uses the new blue-and-white cloud logo. |
 
 **Keep the version at 3.10.** Its Windows package contains only the default six
@@ -152,7 +152,7 @@ The interface is in Simplified Chinese. Button names below are given in Chinese 
 | **Windows 10/11 x64** | `A7C2Tools-Windows-x64.zip` from [Releases](https://github.com/QAQLeonard/a7c2-tools/releases) | Extract the whole archive and run `A7C2Tools.exe`. Keep the `_internal` and `Profiles` folders next to it; don't copy the EXE out on its own. No Python install needed. |
 | **macOS 14+ (Apple Silicon)** | `A7C2Tools-macOS-arm64.dmg` from [Releases](https://github.com/QAQLeonard/a7c2-tools/releases) | Drag the app into Applications. It isn't signed by a developer, so allow it once under System Settings → Privacy & Security. No Intel build. **USB on a real Mac has not been verified yet.** |
 
-Version **3.10** stays unchanged. Windows includes **six camera-ready A7Look files with icons**, once each, without embedded RAW references or paired DCPs. The full 41-pair collection is packaged separately for Sony cloud distribution. This update does not include a newly built macOS DMG.
+Version **3.10** stays unchanged. Windows includes **six camera-ready A7Look files with icons**, once each, without embedded RAW references or paired DCPs. The full 41-pair collection is packaged separately for Sony cloud distribution. The current 3.10 prerelease also supplies a rebuilt Apple Silicon macOS DMG.
 - **Windows:** in the `Profiles` folder next to the EXE.
 - Windows firmware generation uses bundled local tools; no WSL, Ubuntu or separate Python installation is required. The selected save folder is used directly and previous build outputs are replaced.
 - **macOS:** inside the app. Open them with **打开内置 DCP／A7Look 配对库 (Open paired DCP/A7Look library)** on the Custom Creative Looks page.

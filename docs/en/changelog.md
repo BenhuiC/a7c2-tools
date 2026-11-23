@@ -1,6 +1,6 @@
 # Changelog
 
-- Development: mean-DE00 native-first fitting, monotone S-capable Gamma and four local Fuji refits; archives/cloud remain unchanged.
+- 3.10: mean-DE00 native-first fitting, monotone S-capable Gamma and six updated icon-bearing defaults; Ricoh uses our actual Adobe/Cobalt/C2 reference. Model validation only.
 
 - Restore the original-trust buttons in First Trust/Advanced Settings, allow completed public-key installation to repeat, and preserve the original same-body backup. Correct card-recovery completion guidance to manual 2.01 flashing.
 

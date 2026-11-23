@@ -11,14 +11,32 @@ most training mass, with smaller explicit gray/primary/chart/sector anchors.
 The same weak grid-output and node-magnitude penalties enter validation choice.
 RGB RMSE remains a diagnostic, not the data objective.
 
-Four local Fuji refits use the same original targets and provided November 18
-operator. On 19,909 validation points, mean DE00 changes CC 2.054→0.960,
-Classic Negative 2.362→1.274, Velvia 2.519→1.671 and Eterna 1.932→0.902.
-Grid-node RMS falls 14–43%; P99/max DE00 also improve. Velvia's RGB RMSE rises.
-These are chart/model results, not physical color acceptance. Only these four
-local library entries and the two matching defaults change; other looks and DCP
-references stay intact. Distribution archives and the cloud converter have not
-been updated by this development change. A7Look /2 and the camera ABI stay unchanged.
+The six bundled defaults use the new fitter. The four Fuji looks retain their
+original reference targets; Ricoh Positive/Negative use owner-supplied Cobalt
+Ricoh GR v3.1 ordinary XMP with the matching C2 Modular v2.1 base. Their targets
+are actual Adobe RGB16 exports at exposure 0 and amount 1. Sensor triples match
+the complete frozen C2 cohort directly, without interpolation. Mean DE00 below
+uses the same operator and 19,909 validation rows for old/new parameters:
+
+| Look | Previous parameters | New parameters |
+| --- | ---: | ---: |
+| Fujifilm Classic Negative | 2.362 | 1.274 |
+| Fujifilm Classic Chrome | 2.054 | 0.960 |
+| Fujifilm Nostalgic Negative | 2.429 | 1.319 |
+| Fujifilm Astia | 2.828 | 1.425 |
+| Ricoh Positive Film | 5.674 | 1.022 |
+| Ricoh Negative Film | 4.365 | 1.003 |
+
+For Ricoh, the reference itself changed: old parameters are scored against the
+new Cobalt target, not compared with historical scores against the old +0.7 EV
+reference. The new bundled Ricoh files do not embed an unrelated old DCP or claim
+native Ricoh firmware equivalence. The remaining full-library entries are outside
+this six-default update. Both Ricoh grid magnitudes increase against the previous
+parameters while fitting their changed targets; reduced grid use is not universal.
+A7Look /2, the camera ABI and firmware generator stay
+unchanged. These are chart/model results, not physical-camera color acceptance.
+The Windows and Apple Silicon Mac packages include the new fitter and six defaults;
+the shared cloud converter and complete cloud library are separate deployments.
 
 ## Repeatable trust installation (2026-11-23)
 
