@@ -29,9 +29,10 @@ def test_full_native_packet_keeps_all_parameters_and_rejects_ambiguous_legacy():
     from looktool import editrecipe,lookfile
     doc=document();doc['schema']=lookfile.FULL_SCHEMA;doc['edit_native']=recipe()
     raw=cameraapi.look_payload(doc)
-    assert len(raw)==3423 and raw[:8]==b'A7F2LOOK'
+    assert len(raw)==3387 and raw[:8]==b'A7F3LOOK'
     assert raw[8:1223]==bytes(1215)
-    assert editrecipe.unpack(raw[1223:])==doc['edit_native']
+    assert raw[1223:1231]==b'A7C2ED03' and struct.unpack_from('<I',raw,1231)[0]==2152
+    assert raw[1235:]==editrecipe.pack(doc['edit_native'])[48:]
     doc['schema']=lookfile.SCHEMA
     with pytest.raises(ValueError):cameraapi.look_payload(doc)
 
@@ -39,7 +40,9 @@ def test_full_native_packet_keeps_all_parameters_and_rejects_ambiguous_legacy():
 def test_a7look_is_read_and_sent_without_an_intermediate_file(tmp_path):
     source=tmp_path/'my look.a7look';source.write_text(json.dumps(document()),encoding='utf-8')
     class Connection:
-        def execute(self,command,data=None):self.command=command;self.data=data;return b'{"state":"pending_reload"}'
+        def execute(self,command,data=None):
+            self.command=command;self.data=data
+            return b'{"state":"idle"}' if command.endswith(' info') else b'{"state":"pending_reload"}'
     connection=Connection()
     assert cameraapi.apply_look(connection,4,source)['state']=='pending_reload'
     assert shlex.split(connection.command)==[cameraapi.COMMAND,'look','4','Example']
@@ -50,7 +53,9 @@ def test_a7look_is_read_and_sent_without_an_intermediate_file(tmp_path):
 
 def test_fixed_command_quotes_name_without_shell_expansion():
     class Connection:
-        def execute(self,command,data=None):self.command=command;self.data=data;return b'{"state":"pending_reload"}'
+        def execute(self,command,data=None):
+            self.command=command;self.data=data
+            return b'{"state":"idle"}' if command.endswith(' info') else b'{"state":"pending_reload"}'
     connection=Connection();name="My look ' $(unused)"
     assert cameraapi.call(connection,'look',3,name,payload=b'body')['state']=='pending_reload'
     assert shlex.split(connection.command)==[cameraapi.COMMAND,'look','3',name]

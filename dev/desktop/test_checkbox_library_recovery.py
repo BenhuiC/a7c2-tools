@@ -65,13 +65,13 @@ def test_recovery_button_routes_one_version_transaction_with_separate_record(vie
     button=view.findChild(W.QPushButton,'action_ssh_restore_version')
     with patch.object(view,'launch') as launch:button.click()
     action,args=launch.call_args.args
-    assert action=='ssh_restore_version' and args['source_version']=='3.01'
+    assert action=='ssh_restore_version' and args['source_version']=='3.10'
     assert 'version-restore' in args['workspace']
     assert action in catalog.CAMERA_ACTIONS and action in catalog.POWER_ACTIONS
     assert view.findChild(W.QPushButton,'action_firmware_factory_build') is not None
 
 
-@pytest.mark.parametrize('version,before',[('3.01',b'\x01\x03'),('3.02',b'\x02\x03')])
+@pytest.mark.parametrize('version,before',[('3.01',b'\x01\x03'),('3.02',b'\x02\x03'),('3.10',b'\x10\x03')])
 def test_version_recovery_only_changes_native_version_file(tmp_path,version,before):
     connection=Connection({'/setting/updater/dat4':before})
     args=dict(workspace=str(tmp_path/'version'),firmware='2.01',source_version=version,

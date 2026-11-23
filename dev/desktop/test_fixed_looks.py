@@ -10,6 +10,21 @@ def test_all_64_native_recipes_reproduce_the_distributed_asset():
         assert generated==fixedlooks.asset()['templates'][mask]
         assert all(len(bytes.fromhex(v))==len(bytes.fromhex(fixedlooks.asset()['before'][k])) for k,v in generated.items())
 
+
+def test_previous_status_branch_remains_usable_until_firmware_update(original_camera_inputs,tmp_path,monkeypatch):
+    ap=original_camera_inputs[0]['appFw.so']
+    target=bytearray(fixedlooks.patch(ap,63))
+    for at in fixedlooks.asset()['status_icon_offsets']:
+        raw=bytes.fromhex(fixedlooks.asset()['before'][str(at)])
+        target[at:at+len(raw)]=raw
+    old=bytes(target)
+    assert not fixedlooks.inspect(old)['live_status_slot_icons']
+    monkeypatch.setattr(runtimebindings,'compile_worker',lambda *args,**kwargs:None)
+    runtimebindings.build(old,runtimebindings.targets(old,{0x02cf0cd0:b'\0'}),tmp_path)
+    updated=fixedlooks.patch(old,63)
+    assert fixedlooks.inspect(updated)['live_status_slot_icons']
+    assert fixedlooks.restore(updated)==ap
+
 def test_real_ap_all_slot_combinations_and_exact_restore(original_camera_inputs):
     ap=original_camera_inputs[0]['appFw.so']
     assert fixedlooks.inspect(ap)['mask']==0

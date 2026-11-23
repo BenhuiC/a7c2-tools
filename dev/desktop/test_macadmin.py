@@ -13,7 +13,7 @@ from desktopapp.platforms import macos_authorization as macadmin
 from desktopapp.paths import write_json
 
 
-@pytest.mark.parametrize('action',['setup_all','direct_factory_reset','direct_verify','sound_install','connect'])
+@pytest.mark.parametrize('action',['firmware_trust_install','firmware_settings_install','usb_set_version','direct_verify','sound_install','connect'])
 def test_camera_actions_need_mac_authorization(action):
     with patch.object(macadmin.sys,'platform','darwin'),patch.object(macadmin.os,'geteuid',return_value=501,create=True):
         assert macadmin.required(action)
@@ -21,7 +21,7 @@ def test_camera_actions_need_mac_authorization(action):
         assert not macadmin.required(action)
 
 
-@pytest.mark.parametrize('action',['sound_import','compile_look','plugin_install','driver_scan'])
+@pytest.mark.parametrize('action',['sound_import','compile_look','plugin_install','driver_scan','setup_all','direct_factory_reset'])
 def test_offline_actions_do_not_request_privileges(action):
     with patch.object(macadmin.sys,'platform','darwin'),patch.object(macadmin.os,'geteuid',return_value=501,create=True):
         assert not macadmin.required(action)
@@ -60,7 +60,7 @@ def test_terminal_launcher_quoting_preserves_spaces_quotes_and_metacharacters(tm
 def make_request(tmp_path,monkeypatch):
     monkeypatch.setenv('A7C2_DESKTOP_DATA',str(tmp_path/'app'))
     request=tmp_path/'job/request.private.json'
-    write_json(request,dict(action='direct_factory_reset',arguments={},job_dir=str(request.parent)))
+    write_json(request,dict(action='firmware_settings_install',arguments={},job_dir=str(request.parent)))
     return request
 
 

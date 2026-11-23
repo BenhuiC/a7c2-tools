@@ -1,9 +1,7 @@
-"""Compile look/audio changes locally and publish them through pinned SSH.
+"""Daily material writes use the installed API; legacy package helpers stay offline.
 
-Initial feature installation belongs to the local firmware builder. Updates
-require that exact local baseline and change only CP tables/switches, look-title
-resources and the installed native sound loader's private data files. No USB,
-system account change, shell startup edit or automatic restart is performed.
+Host baselines are retained for explicit offline compilation and version-restore
+packages. They are not prerequisites for daily look or sound API operations.
 """
 import base64
 import json
@@ -14,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import uuid
+from . import VERSION
 
 from .paths import ROOT,write_json
 
@@ -181,7 +180,7 @@ def compile_sound_switch(folder,selection,enabled,output):
     return save_package(updates,output,'sound-switch',source_baseline=folder)
 
 
-def prepare_version_restore(connection,output,*,source_version='3.01',target_version='2.00'):
+def prepare_version_restore(connection,output,*,source_version=VERSION,target_version='2.00'):
     """Use Sony's two-byte VersionFile format, not a display-string patch."""
     from .firmwarelocal import version_bytes
     major,minor=version_bytes(source_version);expected=bytes((minor,major))
@@ -315,21 +314,10 @@ def run(action,args,job):
     setup_runtime()
     sys.path.insert(0,str(ROOT/'src/shutter_sound'))
     output=Path(args['workspace'])
-    if action in ('ssh_sound_custom','ssh_sound_switch','ssh_sound_task'):
-        return run_sound(action,args,job)
-    if action=='ssh_save_looks':
-        if not args.get('baseline'):
-            raise ValueError('请在连接设置中选择本地固件构建结果的 baseline 目录。')
-        from .lookbatch import options
-        options(args.get('operations',[]),allow_menu_icons=True)
-        compile_look(args['baseline'],args.get('operations',[]),output)
-        connection=Connection(args['bind_ip'],args.get('client_private'),args.get('host_public'),Path(job)/'ssh-connection')
-        from .cameraapi import call
-        state=call(connection,'task')
-        if state.get('state') not in ('idle','active'):
-            raise ValueError('请先断电重开并核对上次 SSH 更新；相机任务状态：'+str(state.get('state')))
-        result=apply(output,connection)
-    elif action=='ssh_compile_looks':
+    if action in ('ssh_sound_custom','ssh_sound_switch','ssh_sound_task','ssh_save_looks'):
+        from .cameraoperations import run as api_run
+        return api_run(action,args,job)
+    if action=='ssh_compile_looks':
         operations=args.get('operations',[])
         if not operations or any(row.get('action')!='write' for row in operations):
             raise ValueError('添加要通过 SSH 更新的 A7Look 槽位；恢复默认请重新生成本地固件')
@@ -347,12 +335,13 @@ def run(action,args,job):
     elif action in ('ssh_apply_update','ssh_verify_update','ssh_connect','ssh_prepare_version','ssh_restore_version'):
         connection=Connection(args['bind_ip'],args['client_private'],args['host_public'],Path(job)/'ssh-connection')
         if action=='ssh_restore_version':
-            prepare_version_restore(connection,output,source_version=args.get('source_version','3.01'),target_version='2.00')
+            prepare_version_restore(connection,output,source_version=args.get('source_version',VERSION),target_version='2.00')
             result=apply(output,connection)
-            result.update(mode='firmware_version',version_only=True,factory_restored=False,updater_trust_restored=False,
-                message='仅完成版本资料修正；原厂签名信任与实际官方卡刷尚未验证。')
+            result.update(mode='card_recovery',version_only=True,factory_restored=False,updater_trust_restored=False,
+                card_update_required=True,target_version='2.00',
+                message='版本准备完成；机身程序尚未恢复，仍需手动卡刷。')
         elif action=='ssh_prepare_version':
-            result=prepare_version_restore(connection,output,source_version=args.get('source_version','3.01'),
+            result=prepare_version_restore(connection,output,source_version=args.get('source_version',VERSION),
                                            target_version=args.get('target_version','2.00'))
         elif action=='ssh_connect':
             response=connection.execute("printf 'A7C2_SSH_OK\\n'; /bin/busybox uname -m; /bin/busybox grep '^Uid:' /proc/self/status; cat /proc/sys/kernel/random/boot_id")
@@ -370,44 +359,9 @@ def run(action,args,job):
 
 
 def run_sound(action,args,job):
-    """Send the selected computer conversion to the fixed camera command once."""
-    from . import cameraapi
-    payload=None
-    if action!='ssh_sound_task':
-        prior=args.get('previous_look_update')
-        if prior and (Path(prior)/'update.private.json').is_file():
-            state=json.loads((Path(prior)/'update.private.json').read_text(encoding='utf-8'))
-            if state.get('phase') not in ('LOADED','PREPARED'):
-                raise ValueError('请先在滤镜页核对上次 SSH 更新，再修改音效。')
-        selection=args['selection']
-        if selection not in ('electronic','mechanical','both'):raise ValueError('请勾选快门声音的应用范围。')
-        if action=='ssh_sound_custom':
-            from .actions.sound import converted_file
-            payload=converted_file(args['sound_workspace']).read_bytes()
-        output=Path(args['workspace']);output.mkdir(parents=True,exist_ok=False)
-        # Preserve intent before connecting. Never retry an ambiguous call.
-        write_json(output/'command.private.json',dict(action=action,phase='ATTEMPTED',selection=selection))
-    else:output=Path(job)
-    connection=Connection(args['bind_ip'],args.get('client_private'),args.get('host_public'),Path(job)/'ssh-connection')
-    try:
-        if action=='ssh_sound_task':response=cameraapi.call(connection,'task')
-        else:
-            operation='custom' if action=='ssh_sound_custom' else 'on' if args['enabled'] else 'off'
-            response=cameraapi.call(connection,'sound',selection,operation,payload=payload)
-        phase={'pending_reload':'AWAITING_RELOAD','active':'LOADED','idle':'IDLE','failed':'FAILED'}.get(response.get('state'))
-        if phase is None:raise ValueError('相机未返回可识别的任务状态，请保留日志。')
-        result=dict(response,phase=phase,workspace=str(output),camera_io=True,mode='sound_update',
-            reload_required=phase=='AWAITING_RELOAD',physical_tested=False)
-        write_json(output/'command.private.json',result)
-        if phase=='FAILED':raise RuntimeError(response.get('error') or response.get('message') or '相机音效任务失败，请查看日志。')
-        if action=='ssh_sound_task' and phase=='LOADED' and args.get('baseline'):
-            result['next_baseline']=sound_baseline(args['baseline'],output,connection)
-            write_json(output/'command.private.json',result)
-        return result
-    except BaseException as exc:
-        if not (output/'command.private.json').is_file() or json.loads((output/'command.private.json').read_text(encoding='utf-8')).get('phase')=='ATTEMPTED':
-            write_json(output/'command.private.json',dict(action=action,phase='NEEDS_REVIEW',error=str(exc)))
-        raise
+    """Compatibility entry for the shared daily API workflow."""
+    from .cameraoperations import run as api_run
+    return api_run(action,args,job)
 
 
 def sound_baseline(source,output,connection):

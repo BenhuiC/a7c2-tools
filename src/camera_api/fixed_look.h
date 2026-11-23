@@ -9,6 +9,8 @@
 #define X_RECORD 0x500U
 static unsigned char *fixed_before,*fixed_after;
 static struct stat fixed_source;
+/* Keep the VFAT inode referenced throughout preparation and publication. */
+static int fixed_source_fd=-1;
 
 static int fixed_validate(int cp,const unsigned char *p){
     unsigned count=get32(p+4),mask=get32(p+8);
@@ -60,7 +62,7 @@ static int fixed_prepare(int slot,const unsigned char *data,size_t input_size){
     put32(fixed_after+X_DIRECTORY+((unsigned)slot-1)*16+12,kind);
     put32(fixed_after+8,get32(fixed_after+8)|(1U<<(slot-1)));
     if(fixed_validate(fd,fixed_after))goto done;result=0;
-done:free(entry);close(fd);return result;
+done:free(entry);if(!result)fixed_source_fd=fd;else close(fd);return result;
 }
 static int fixed_install(int slot){
     if(!fixed_before||!fixed_after||!undo_active)return bad("fixed-source-not-prepared");
@@ -108,5 +110,8 @@ static int fixed_status(void){
     }
     free(data);close(fd);return result;
 }
-static void fixed_close(void){free(fixed_before);free(fixed_after);fixed_before=NULL;fixed_after=NULL;}
+static void fixed_close(void){
+    free(fixed_before);free(fixed_after);fixed_before=NULL;fixed_after=NULL;
+    if(fixed_source_fd>=0)close(fixed_source_fd);fixed_source_fd=-1;
+}
 #endif

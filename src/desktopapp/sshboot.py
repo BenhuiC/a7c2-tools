@@ -1,6 +1,5 @@
 """Include SSH files; a small Wi-Fi event receiver controls the listener."""
 import base64
-import os
 from pathlib import Path
 import subprocess
 
@@ -28,16 +27,14 @@ exec ./dropbear -F -p "$1:2222" -r "$session/hostkey" -D . -P "$session/dropbear
 
 
 def build_wifi_receiver(output,zig=None):
-    from looktool.nativebuild import zig_command
+    from looktool.nativebuild import zig_command,zig_environment,zig_output_path
     output=Path(output);output.parent.mkdir(parents=True,exist_ok=True)
-    env=os.environ.copy()
-    cache=Path(os.environ.get('A7C2_ZIG_CACHE',output.parent/'zig-cache'))
-    env['ZIG_GLOBAL_CACHE_DIR']=str(cache/'global')
-    env['ZIG_LOCAL_CACHE_DIR']=str(cache/'local')
-    command=zig_command(zig)+['cc','-target','aarch64-linux-musl','-Os','-s','-static',
-        str(ROOT/'src/camera_api/wifi_ssh.c'),'-o',str(output)]
-    done=subprocess.run(command,env=env,capture_output=True,text=True,timeout=180)
-    if done.returncode:raise ValueError('Wi-Fi SSH receiver build failed: '+done.stderr[-2500:])
+    env=zig_environment()
+    with zig_output_path(output,env) as local:
+        command=zig_command(zig)+['cc','-target','aarch64-linux-musl','-Os','-s','-static',
+            str(ROOT/'src/camera_api/wifi_ssh.c'),'-o',str(local)]
+        done=subprocess.run(command,env=env,capture_output=True,text=True,timeout=180)
+        if done.returncode:raise ValueError('Wi-Fi SSH receiver build failed: '+done.stderr[-2500:])
     return output
 
 
@@ -46,6 +43,8 @@ def patch_startup(original):
     marker=b'    /usr/bin/bootin.elf &\n'
     if original is None or original.count(marker)!=1 or b'wifi-ssh' in original:
         raise ValueError('Original C2 startup seam differs')
+    from .startup import patch_log_hook
+    original=patch_log_hook(original)
     addition=b'    /usr/lib/a7c2-tools/ssh/wifi-ssh </dev/null >/dev/null 2>&1 &\n'
     return original.replace(marker,marker+addition,1)
 
@@ -68,12 +67,7 @@ def prepare_boot(args,output,rootfs,current=None):
     receiver=build_wifi_receiver(output/'wifi-ssh',args.get('zig'))
     rows['/lib/a7c2-tools/ssh/wifi-ssh']=dict(source=str(receiver),mode=0o755)
     if current is not None:
-        from .cameraapi import build
-        command=build(current,output/'api',args.get('zig'))
-        rows['/lib/a7c2-tools/ssh/a7c2-api']=dict(source=str(command),mode=0o755)
-        entry=output/'a7c2-api.sh'
-        entry.write_text('#!/bin/busybox sh\nexec /usr/lib/a7c2-tools/ssh/a7c2-api "$@"\n',encoding='ascii',newline='\n')
-        rows['/bin/a7c2-api']=dict(source=str(entry),mode=0o755)
+        rows.update(prepare_api(current,output/'api',args.get('zig')))
     _,_,ext2,_=tools();original=None
     with Path(rootfs).open('rb') as image:
         for entry in ext2.readExt2(image):
@@ -85,3 +79,14 @@ def prepare_boot(args,output,rootfs,current=None):
         startup_dispatch='background_after_vendor_boot',startup_wait=False,physical_boot_verified=False))
     (output/'dropbear-LICENSE.txt').write_bytes((assets/'dropbear-LICENSE.txt').read_bytes())
     return dict(usr=rows,rootfs={'/sbin/init2':dict(source=str(script),mode=0o755)})
+
+
+def prepare_api(current,output,zig=None):
+    """Install the local command independently of SSH listener/key setup."""
+    from .cameraapi import build
+    output=Path(output);output.mkdir(parents=True,exist_ok=True)
+    binary=build(current,output,zig)
+    entry=output/'a7c2-api.sh'
+    entry.write_text('#!/bin/busybox sh\nexec /usr/lib/a7c2-tools/ssh/a7c2-api "$@"\n',encoding='ascii',newline='\n')
+    return {'/lib/a7c2-tools/ssh/a7c2-api':dict(source=str(binary),mode=0o755),
+            '/bin/a7c2-api':dict(source=str(entry),mode=0o755)}

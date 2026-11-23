@@ -5,6 +5,105 @@ import sys
 def run(resources_only=False):
     root=Path(__file__).resolve().parents[2]
     sys.path[:0]=[str(root/'src'),str(root/'src/looks')]
+    import os
+    if os.environ.get('A7C2_MACOS_RELEASE_SELFTEST'):
+        import runpy
+        return runpy.run_path(str(root/'dev/desktop/macos_release_smoke.py'))['run']()
+    if os.environ.get('A7C2_FIRMWARE_OPTIONS_SELFTEST'):
+        import runpy
+        return runpy.run_path(str(root/'dev/desktop/firmware_options_smoke.py'))['run'](
+            os.environ['A7C2_FIRMWARE_OPTIONS_SELFTEST'])
+    if os.environ.get('A7C2_CONNECTION_SETTINGS_SELFTEST'):
+        import runpy
+        return runpy.run_path(str(root/'dev/desktop/connection_settings_smoke.py'))['run'](
+            os.environ['A7C2_CONNECTION_SETTINGS_SELFTEST'])
+    if os.environ.get('A7C2_MANUAL_FLOW_SELFTEST'):
+        import runpy
+        return runpy.run_path(str(root/'dev/desktop/manual_flow_smoke.py'))['run'](
+            os.environ['A7C2_MANUAL_FLOW_SELFTEST'])
+    if os.environ.get('A7C2_SOUND_VOLUME_SELFTEST'):
+        import runpy
+        return runpy.run_path(str(root/'dev/desktop/sound_volume_smoke.py'))['run'](
+            os.environ['A7C2_SOUND_VOLUME_SELFTEST'])
+    if os.environ.get('A7C2_FIRMWARE_SOUND_SELFTEST'):
+        import runpy
+        return runpy.run_path(str(root/'dev/desktop/firmware_sound_smoke.py'))['run'](
+            os.environ['A7C2_FIRMWARE_SOUND_SELFTEST'])
+    if os.environ.get('A7C2_INSTALL_GUIDE_SELFTEST'):
+        import runpy
+        return runpy.run_path(str(root/'dev/desktop/install_guide_smoke.py'))['run'](
+            os.environ['A7C2_INSTALL_GUIDE_SELFTEST'])
+    if os.environ.get('A7C2_RECOVERY_SOUND_SELFTEST'):
+        import runpy
+        return runpy.run_path(str(root/'dev/desktop/recovery_sound_smoke.py'))['run'](
+            os.environ['A7C2_RECOVERY_SOUND_SELFTEST'])
+    if os.environ.get('A7C2_UNIFIED_API_SELFTEST'):
+        import runpy
+        return runpy.run_path(str(root/'dev/desktop/unified_api_smoke.py'))['run'](
+            os.environ['A7C2_UNIFIED_API_SELFTEST'])
+    if os.environ.get('A7C2_TRUST_RESTORE_FAT_TIME_SELFTEST'):
+        import runpy
+        return runpy.run_path(str(root/'dev/desktop/trust_restore_fat_time_smoke.py'))['run'](
+            os.environ['A7C2_TRUST_RESTORE_FAT_TIME_SELFTEST'])
+    if os.environ.get('A7C2_TRUST_RESTORE_DIAGNOSTICS_SELFTEST'):
+        import runpy
+        return runpy.run_path(str(root/'dev/desktop/trust_restore_diagnostics_smoke.py'))['run'](
+            os.environ['A7C2_TRUST_RESTORE_DIAGNOSTICS_SELFTEST'])
+    if os.environ.get('A7C2_M4_ICON_API_SELFTEST'):
+        import runpy
+        return runpy.run_path(str(root/'dev/desktop/m4_icon_api_smoke.py'))['run'](os.environ['A7C2_M4_ICON_API_SELFTEST'])
+    if os.environ.get('A7C2_PREINSTALLED_SOUND_SELFTEST')=='1':
+        import runpy
+        return runpy.run_path(str(root/'dev/desktop/preinstalled_sound_smoke.py'))['run']()
+    if os.environ.get('A7C2_FACTORY_FIRMWARE_SELFTEST'):
+        import runpy
+        return runpy.run_path(str(root/'dev/desktop/factory_firmware_smoke.py'))['run'](os.environ['A7C2_FACTORY_FIRMWARE_SELFTEST'])
+    if os.environ.get('A7C2_CARD_RECOVERY_SELFTEST')=='1':
+        import runpy
+        return runpy.run_path(str(root/'dev/desktop/card_recovery_smoke.py'))['run']()
+    if os.environ.get('A7C2_NATIVE_FIRMWARE_SELFTEST'):
+        import runpy
+        return runpy.run_path(str(root/'dev/desktop/native_firmware_smoke.py'))['run'](os.environ['A7C2_NATIVE_FIRMWARE_SELFTEST'])
+    if os.environ.get('A7C2_OUTPUT_DIRECTORY_SELFTEST')=='1':
+        import runpy
+        return runpy.run_path(str(root/'dev/desktop/output_directory_smoke.py'))['run']()
+    if os.environ.get('A7C2_INSTALL_PACK_SELFTEST')=='1':
+        import runpy
+        return runpy.run_path(str(root/'dev/desktop/install_pack_smoke.py'))['run']()
+    if os.environ.get('A7C2_M4_PORTRAIT_SELFTEST')=='1':
+        import runpy
+        return runpy.run_path(str(root/'dev/desktop/m4_portrait_smoke.py'))['run']()
+    if os.environ.get('A7C2_SINGLE_USB_CARD_SELFTEST')=='1':
+        import runpy
+        return runpy.run_path(str(root/'dev/desktop/card_flow_smoke.py'))['run']()
+    if os.environ.get('A7C2_CARD_ACTIVATION_SELFTEST')=='1':
+        import runpy
+        return runpy.run_path(str(root/'dev/desktop/card_activation_smoke.py'))['run']()
+    if os.environ.get('A7C2_CARD_CONTRACT_SELFTEST')=='1':
+        import runpy
+        return runpy.run_path(str(root/'dev/desktop/card_smoke.py'))['run']()
+    if os.environ.get('A7C2_LUT_SPACES_SELFTEST')=='1':
+        from looktool import lutspaces,looklabels
+        from desktopapp import VERSION
+        import numpy as np
+        opts=lutspaces.options()
+        assert len(opts['inputs'])==37 and len(opts['outputs'])==9
+        sample=np.array([[.1,.2,.3],[.8,.7,.6]])
+        errors={}
+        for key,_,_,_ in lutspaces.PROFILES:
+            value=lutspaces.convert(sample,'srgb',key)
+            errors[key]=float(abs(lutspaces.convert(value,key,'srgb')-sample).max())
+            assert errors[key]<.0004
+        assert looklabels.metadata('Custom unknown title')[1]['label']=='LUT'
+        assert looklabels.metadata('Kodak UltraMax 400')[1]['label']=='K400'
+        from looktool import dcpexport
+        import tempfile
+        folder=Path(tempfile.mkdtemp(prefix='lut-spaces-frozen-',dir=os.environ['TEMP']))
+        source=folder/'identity.cube';source.write_text('LUT_3D_SIZE 2\n0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n',encoding='utf-8')
+        dcpexport.cube_profile(source,'Frozen Log DCP',folder/'look.dcp',input_space='slog3-sgamut3cine',output_space='rec709',dimensions=(12,16,16))
+        assert (folder/'look.dcp').stat().st_size>1000
+        return dict(version=VERSION,input_spaces=len(opts['inputs']),output_spaces=len(opts['outputs']),
+            roundtrip=errors,default_icon='LUT',actual_Log_DCP_generated=True,camera_io=False,unmodified_legacy_checks_repeated=False)
     from desktopapp import VERSION,presets
     from looktool import r5fit,lookfile,editrecipe
     report=None;native_count=None;projection=None
@@ -37,7 +136,13 @@ def run(resources_only=False):
     collection=json.loads(paired_catalog.read_text(encoding='utf-8'))if paired_catalog.is_file()else{}
     library=root/'desktop-assets/creative-look-library-v2'
     count=0;dcp_count=0
-    if collection.get('schema')=='a7c2-profile-library/2':
+    if collection.get('schema')=='a7c2-install-looks/1':
+        for row in collection['profiles']:
+            doc=lookfile.read(paired/row['a7look'])
+            assert doc['name']==row['name'] and doc.get('menu_icon') and 'raw_profile' not in doc
+            lookfile.writer_document(doc);count+=1
+        assert count==collection['count']==6
+    elif collection.get('schema')=='a7c2-profile-library/2':
         from looktool import rawidentity,rawprofiles
         for row in collection['profiles']:
             doc=lookfile.read(paired/row['a7look']);other=lookfile.read(paired/row['menu_a7look'])

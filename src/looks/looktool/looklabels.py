@@ -55,7 +55,7 @@ def metadata(name, *, source=None, icon_text=None, include_icon=True):
     row = lookup(name)
     known = row or (lookup(source) if source else None)
     title = row['name'] if row else name
-    text = icon_text if icon_text is not None else known['icon_text'] if known else ''
+    text = icon_text if icon_text else known['icon_text'] if known else 'LUT'
     return title, iconfile.from_text(text) if include_icon and text else None
 
 

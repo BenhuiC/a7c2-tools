@@ -23,6 +23,6 @@ def main(argv):
         print('Rollback work:',folder,flush=True)
         state=Rollback(folder,zig=a.zig).run(a.backup2,a.battery_percent,a.firmware_version)
     else:
-        p.add_argument('work',type=Path);p.add_argument('--accept-photos',action='store_true')
-        a=p.parse_args(argv[1:]);state=Rollback(a.work).verify(a.accept_photos)
+        p.add_argument('work',type=Path)
+        a=p.parse_args(argv[1:]);state=Rollback(a.work).verify()
     print('Rollback:',state['phase']);return 0

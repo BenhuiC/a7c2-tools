@@ -82,8 +82,8 @@ def convert(source, output, *, start=0, duration=None, peak=0.4, ffmpeg=None):
         raise
 
 
-def _encode_selected(root, peak):
-    payload, preview, report = native_codec.candidate(root / 'selected.private.wav', target_rate=24000, peak=peak)
+def _encode_selected(root, peak, *, clip=False):
+    payload, preview, report = native_codec.candidate(root / 'selected.private.wav', target_rate=24000, peak=peak,clip=clip)
     if not 0 < len(payload) <= 51200:
         raise ValueError('Encoded clip exceeds the native buffer capacity')
     (root / 'custom-native.private.bin').write_bytes(payload)
@@ -122,18 +122,16 @@ def adjust_volume(conversion, output, *, decibels=0, reset=False):
     gain_db = 0 if reset else previous.get('volume_gain_db', 0) + decibels
     if not math.isfinite(gain_db):
         raise ValueError('Use a finite volume adjustment')
-    max_gain_db = 20 * math.log10(.95 / base_peak)
-    limited = gain_db > max_gain_db
-    gain_db = max(-30, min(gain_db, max_gain_db))
+    gain_db = max(-30,gain_db)
     peak = base_peak * 10 ** (gain_db / 20)
     root.mkdir(parents=True, exist_ok=False)
     try:
         wav = root / 'selected.private.wav'
         shutil.copyfile(source / wav.name, wav)
-        report = _encode_selected(root, peak)
+        report = _encode_selected(root, peak,clip=True)
         report.update({key: previous[key] for key in ('source', 'start_seconds', 'duration_seconds', 'fade_seconds')})
         report.update(requested_peak=peak, volume_base_peak=base_peak,
-                      volume_gain_db=gain_db, volume_limited=limited, camera_io=False)
+                      volume_gain_db=gain_db, volume_limited=False, camera_io=False)
         (root / 'conversion.private.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
         return report
     except BaseException:

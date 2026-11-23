@@ -24,13 +24,14 @@ def ap_fixture():
 
 
 def cp_fixture():
-    cp=bytearray(max(at+len(raw) for at,raw in candidate.CP_GUARDS)+8)
+    cp=bytearray(max([at+len(raw) for at,raw in candidate.CP_GUARDS]+
+                     [at+len(old) for at,old,_ in candidate.WINDOWS])+8)
     for at,raw in candidate.CP_GUARDS:cp[at:at+len(raw)]=raw
     for at,old,new in candidate.WINDOWS:cp[at:at+len(old)]=old
     return bytes(cp)
 
 
-@pytest.mark.parametrize('selection,keys',[('electronic',{3}),('mechanical',{1,2}),('both',{1,2,3})])
+@pytest.mark.parametrize('selection,keys',[('electronic',{3}),('mechanical',{1,2,10,11,12,13,14,15}),('both',set(sound.KINDS))])
 def test_selected_rows_only_and_silent_second_mechanical_phase(selection,keys):
     audio,csv,name,rows=sound.configuration(b'',bytes(128),selection)
     assert set(sound.decode(csv))==keys
@@ -105,7 +106,7 @@ def test_actual_native_reader_sparse_rows_and_bounded_invalid_kind():
         actual=execute(programs['appFw.so'],csv,boot_block=True,expected_path=boot_sound.NEW_PATH[:-1],
                        csv_limit=2048,expected_kinds=tuple(rows))
         for kind,value in rows.items():
-            got=actual['descriptors'][kind-1]
+            got=actual['descriptors'][sound.descriptor_index(kind)]
             assert (got['kind'],got['bytes'],got['offset'],got['filename'])==(
                 kind,value['size'],value['offset'],sound.ROOT+value['name'])
         assert actual['maximum_native_reader_stack_bytes']<=0xa90
@@ -143,12 +144,14 @@ def test_new_request_keeps_its_own_unknown_intent_during_session_preparation(tmp
     assert failed['phase']=='needs_review'
 
 
-@pytest.mark.parametrize('legacy',[False,True])
+@pytest.mark.parametrize('loader',['stock','legacy','preinstalled'])
 @pytest.mark.parametrize('fault',[None,'resource-readback','program-ack'])
-def test_files_before_new_hook_legacy_disarm_and_unknown_ack_stop(tmp_path,legacy,fault):
+def test_files_before_new_hook_legacy_disarm_and_unknown_ack_stop(tmp_path,loader,fault):
     import trial
+    legacy=loader=='legacy'
     ap=ap_fixture();cp=cp_fixture()
     if legacy:ap=boot_sound.patch(ap,boot_sound.expected_windows())
+    elif loader=='preinstalled':ap=boot_sound.patch(ap,sound.windows(ap))
     old_csv=boot_sound.CSV.replace(b'0xEC0',b'0x40') if legacy else b''
     data={'/usr/lib/appFw.so':ap,'/cp/cpapp-b.bin':cp}
     if old_csv:data.update({sound.ROOT+'custom.txt':old_csv,sound.ROOT+sound.FILES[0]:bytes(64)})

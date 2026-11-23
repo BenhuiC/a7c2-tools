@@ -97,12 +97,12 @@ class DeviceJobTests(unittest.TestCase):
         self.assertEqual(self.camera.files['/usr/lib/appFw.so'],self.ap)
         renamed=self.camera.files['/usr/share/app/'+nameworker.filenames()[0]]
         self.assertEqual(resources.decode(renamed)['entries'][resources.LABEL_IDS[5]]['text'],'怀旧负片')
-        with self.assertRaises(ValueError):self.job.verify(True)
-        self.camera.reboot();self.assertEqual(self.job.verify(True)['phase'],'COMPLETE')
+        with self.assertRaises(ValueError):self.job.verify()
+        self.camera.reboot();self.assertEqual(self.job.verify()['phase'],'COMPLETE')
         self.assertEqual(self.job.restore(90)['phase'],'RESTORED_AWAITING_RELOAD')
         self.assertEqual(self.camera.files['/cp/cpapp-b.bin'],self.cp);self.assertEqual(self.camera.properties,original_props)
         self.assertEqual(self.camera.files['/usr/share/app/'+nameworker.filenames()[0]],before_resource)
-        self.camera.reboot();self.assertEqual(self.job.verify(True)['phase'],'RESTORED')
+        self.camera.reboot();self.assertEqual(self.job.verify()['phase'],'RESTORED')
     def test_prepare_only_never_installs_and_modified_artifact_stops_install(self):
         self.assertEqual(self.create(False)['phase'],'PREFLIGHT_VERIFIED')
         self.assertEqual(self.camera.files['/cp/cpapp-b.bin'],self.cp);self.assertEqual(self.camera.saves,0)

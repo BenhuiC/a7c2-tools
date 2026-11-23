@@ -1,0 +1,17 @@
+Windows image tools: unchanged Cygwin builds of e2fsprogs and runtime dependencies.
+Used as separate Windows executables; no WSL, Linux distribution or installation is required.
+Binary packages and corresponding source archives: https://mirrors.kernel.org/sourceware/cygwin/
+Corresponding tool/library source archives are included in sources/. Original licenses are in licenses/.
+libgcc1 is distributed with the GCC Runtime Library Exception (licenses/libgcc1/COPYING.RUNTIME).
+cygblkid-1.dll 2.40.2-2
+cygcom_err-2.dll 1.44.5-1
+cyge2p-2.dll 1.44.5-1
+cygext2fs-2.dll 1.44.5-1
+cyggcc_s-seh-1.dll 14.4.0-1
+cygiconv-2.dll 1.19-2
+cygintl-8.dll 0.22.5-1
+cygss-2.dll 1.44.5-1
+cyguuid-1.dll 2.40.2-2
+cygwin1.dll 3.6.12-1
+debugfs.exe 1.44.5-1
+e2fsck.exe 1.44.5-1

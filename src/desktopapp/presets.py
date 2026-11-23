@@ -4,6 +4,7 @@ The actual A7Look/DCP assets are distribution attachments, not MIT source.
 No fitting or downloading occurs during installation.
 """
 import copy
+import sys
 from pathlib import Path
 from .paths import ROOT
 
@@ -48,7 +49,11 @@ def menu_examples(destination):
 
 def catalog():
     """Default file choices without disk access or validation during UI startup."""
-    return [dict(slot=slot, path=str(ROOT / 'desktop-assets/presets' / PACK / ('slot%d.a7look' % slot)), name=name)
+    folder=ROOT/'desktop-assets/presets'/PACK
+    if getattr(sys,'frozen',False) and sys.platform=='win32':
+        external=Path(sys.executable).parent/'Profiles'
+        if (external/'slot1.a7look').is_file():folder=external
+    return [dict(slot=slot, path=str(folder / ('slot%d.a7look' % slot)), name=name)
             for slot, name in enumerate(NAMES, 1)]
 
 

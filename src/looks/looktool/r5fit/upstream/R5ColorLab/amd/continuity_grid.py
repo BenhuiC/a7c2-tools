@@ -70,6 +70,9 @@ def constrain(grid, base, target, weights, response, smoothing, continuity, prog
             model = get(response)
             if not hasattr(model, 'affine'):
                 raise ValueError('Output continuity requires the R5 paired grid response')
+            if getattr(model,'nonlinear_grid',False):
+                prepared=model.prepare_tensor(tools,rgb)
+                return lambda table:model.apply_tensor(tools,rgb,table,prepared)
             coords = model.coordinates_tensor(tools,rgb)
             mixing = tools.tensor(model.response(np.asarray(original)))
         else:

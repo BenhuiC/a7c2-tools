@@ -99,9 +99,7 @@ def test_volume_buttons_ignore_unresolved_camera_tasks(tmp_path,options):
     assert reports[0]['camera_io'] is False and (root/'sound.private.json').read_bytes()==before
 
 
-@pytest.mark.parametrize('command',['audio','recovery'])
-def test_optional_confirmation_does_not_require_a_previous_task(tmp_path,command):
-    root,state=sound_cli.workspace(tmp_path/'sound',True,tmp_path/'backup')
-    state.update(audio_job=str(root/'missing'),pending=dict(command='old',job='missing'))
-    result=(sound_cli.confirm_audio(root,state,'correct') if command=='audio' else sound_cli.confirm_recovery(root,state))
-    assert result['camera_io'] is False and state['pending'] is None
+def test_manual_confirmation_commands_are_removed():
+    assert not hasattr(sound_cli,'confirm_audio')
+    assert not hasattr(sound_cli,'confirm_recovery')
+    assert 'confirm-recovery' not in sound_cli.parser().format_help()

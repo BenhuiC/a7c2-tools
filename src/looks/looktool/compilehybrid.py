@@ -26,6 +26,7 @@ def main(argv=None):
     p.add_argument('--without-menu-icon',action='store_true')
     p.add_argument('--dcp-bridge',type=Path)
     p.add_argument('--input-space')
+    p.add_argument('--output-space',default='srgb',help='LUT output encoding/gamut; default sRGB')
     p.add_argument('--bridge',type=Path)
     p.add_argument('--raw-dcp',type=Path)
     a=p.parse_args(argv)
@@ -40,8 +41,13 @@ def main(argv=None):
     if a.calibration.suffix.lower()!='.json'or not a.calibration.is_file():p.error('Select the new C2 Hybrid response JSON')
     cube=a.source.suffix.lower()=='.cube'
     if cube:
-        if not a.input_space or (a.input_space=='sony-st-srgb')==bool(a.bridge):p.error('CUBE requires Sony ST sRGB, or a named space with an explicit bridge')
-    elif a.input_space or a.bridge or a.raw_dcp:p.error('Input space, bridge and raw-dcp apply only to CUBE')
+        from .lutspaces import resolve
+        if not a.input_space:p.error('Select the CUBE input space')
+        try:
+            if not a.bridge:resolve(a.input_space)
+            resolve(a.output_space)
+        except ValueError as error:p.error(str(error))
+    elif a.input_space or a.bridge or a.raw_dcp or a.output_space!='srgb':p.error('Input/output spaces, bridge and raw-dcp apply only to CUBE')
     try:name,icon=looklabels.metadata(a.name,source=a.source,icon_text=a.menu_icon_text,include_icon=not a.without_menu_icon)
     except ValueError as error:p.error(str(error))
     work=a.work or a.output.with_suffix('.work');work.mkdir(parents=True,exist_ok=True)
@@ -64,9 +70,10 @@ def main(argv=None):
     source=center_mean(render_native(r5fit.context(),inputs))/16383
     raw_profile=None;source_reference=None
     if cube:
-        target,contract=cube_targets(source,copied,a.input_space,bridge)
+        target,contract=cube_targets(source,copied,a.input_space,bridge,a.output_space)
         source_reference=dict(schema='a7c2-source-cube/1',filename=a.source.name,input_space=a.input_space,cube_base64=base64.b64encode(copied.read_bytes()).decode('ascii'))
         if bridge:source_reference['bridge_base64']=base64.b64encode(bridge.read_bytes()).decode('ascii')
+        source_reference['output_space']=a.output_space
     else:
         target,contract,info=dcp_targets(source,copied,dcp_bridge)
     # Frozen byte copies provide the resume contract. Existing diagnostic
@@ -88,7 +95,7 @@ def main(argv=None):
         if not profile_source.exists():
             temporary=work/('reference-'+uuid.uuid4().hex+'.dcp')
             print('Creating the matching Sony Camera ST / CUBE DCP reference.',flush=True)
-            generated_report=dcpexport.cube_profile(copied,name,temporary,bridge=bridge,base=base)
+            generated_report=dcpexport.cube_profile(copied,name,temporary,bridge=bridge,base=base,input_space=a.input_space,output_space=a.output_space)
             temporary.rename(profile_source);r5fit.save(record,generated_report)
         else:generated_report=json.loads(record.read_text(encoding='utf-8'))
         source_filename=companion.name
@@ -100,7 +107,7 @@ def main(argv=None):
         p.error('Companion DCP already contains different data; choose another output path')
     raw_profile=rawidentity.descriptor(profile_source,name)
     raw_profile['source_filename']=source_filename
-    print('C2 Hybrid: native %d starts → up to five target-grid rounds → three stacked rounds. Offline CPU fitting.'%a.passes,flush=True)
+    print('C2 nonlinear: native %d starts → up to five target-grid rounds → three stacked rounds. Offline CPU fitting.'%a.passes,flush=True)
     params,table,report=r5fit.fit(target,work/'fit-hybrid',evaluations=a.evaluations,starts=a.passes,calibration=response)
     edit=copy.deepcopy(json.loads((r5fit.ROOT/'data/template.json').read_text(encoding='utf-8')))
     edit['fitted']=params;editrecipe.validate(edit)
@@ -112,7 +119,7 @@ def main(argv=None):
     if cube:report['reference_contract']=dict(contract,automatic_Adobe_profile_generated=generated_report is not None)
     a.output.parent.mkdir(parents=True,exist_ok=True)
     dcpexport.publish(profile_source,companion)
-    lookfile.write(a.output,name,table,method='R5-C2-Hybrid-native12-grid5-stack3-20261110',
+    lookfile.write(a.output,name,table,method='C2-native12-grid5-stack3-raw-differential-20261118',
         attribution='Owner-provided reference; Hearts-Ace numerical optimizer adapted to C2',metrics=report,
         edit_native=edit,raw_profile=raw_profile,source_reference=source_reference,menu_icon=icon)
     print('Created '+str(a.output.resolve()),flush=True)

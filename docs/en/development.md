@@ -1,5 +1,83 @@
 # Development guide
 
+## macOS 3.10 packaging (2026-11-16)
+
+The Apple Silicon app uses a three-step guide: generate firmware, install the
+body public key, then write selected settings before manual card flashing. It
+does not put driver installation in the guide. A separate USB connection page
+retains native access and volume handling. Windows keeps its four-step guide.
+Both platforms distribute the same six icon-bearing native looks; the full
+41-pair cloud collection remains separate. macOS bundles native debugfs/e2fsck
+and their source notice, and invokes the existing image editor inside the app's
+Python runtime. End users do not need Python or Homebrew for image editing.
+The existing firmware signing identity is supplied separately to native CI.
+Package checks do not authorize physical camera operations or establish them.
+
+The native source snapshot must also carry `desktop-assets/ssh/dropbear`,
+`password.hash` and `dropbear-LICENSE.txt`. These are camera-side Linux inputs,
+not macOS executables. Packaging stops if any is missing. A real packaged
+`firmware_build` with official 2.01 input and the default SSH/look/sound/portrait
+options covers this path; GUI startup and synthetic image edits alone do not.
+Official input and generated firmware remain in the runner's temporary area,
+outside Git, the DMG and uploaded artifacts.
+
+The 3.10 fixed-look asset also covers the live-status translator's base-style
+branch at `0x23e319c`, `0x23e31b8` and `0x23e3210`. It uses the original current
+setting lookup and existing compact normal/selected slot images. The native
+function's frame, visibility gates, factory table and invalid-value diagnostics
+are preserved. Earlier fixed-look AP files remain recognizable for settings
+operations; the next firmware build installs the status correction. Native
+instruction coverage is separate from physical portrait display acceptance.
+
+## 3.10 — Shared camera API and compact transfer (2026-11-13)
+
+Daily look/sound writes and switches share the installed a7c2-api over USB and Wi-Fi. One info response supplies capabilities and task state for a whole look batch. Daily writes no longer require historical AP/CP copies, a host baseline or manual acknowledgement of old jobs. Android resolves known terminal states automatically; a lost reply triggers a status read, never a write replay.
+
+The compact look transport has no CRC32/SHA-256 trailer: full color is 3387 bytes, full color with artwork 4249, and legacy color with artwork 2186. A7Look /2 files and existing internal CP records are unchanged; existing internal serialization is not a new transport digest gate. Target bounds, structure and numeric ranges remain checked, followed by direct byte readback. Sound reuses bounded undo: synced temporary audio/CSV files are renamed into place, and failure restores original bytes or original absence.
+
+USB invokes the same static API in a temporary child, without replacing the App process or adding a resident service. Firmware generation includes the API even when SSH is unchecked, without enabling SSH. Windows remains native. Checks cover host files, AArch64 child processes and simulated connections only: no camera update, APK installation, cold-load listening or physical USB bridge acceptance. New clients need the matching camera API. Version remains 3.10 with six defaults; Sony signing and WBI rules are unchanged.
+
+Restore planning preserves the FAT creation/write time words of the native
+four-byte dat2/dat3 files. Those directory entries are located from the recorded
+FAT12 root, with the recorded allocation/directory layout unchanged. Every other
+out-of-plan byte still stops restoration. The preserved timestamps are copied
+from the current image, so their directory sector is not rewritten. Post-reload
+verification uses the same narrow rule; content changes still fail. A read-only
+physical rehearsal reproduced the old false rejection; successful restore and
+failure paths were exercised on captured bytes in host memory only. No actual
+trust restoration or flash-write/boot acceptance is claimed. Version stays3.10;
+no new validation hashes, startup hooks or in-camera UI were added.
+
+
+Trust restoration still stops before any partition write when bytes outside the
+recorded installation sectors differ. The failure now records the first differing
+byte, affected sector counts and bounded ranges. Support export can reconstruct
+this report from an older failed transaction's saved PC images; it never reconnects
+to the camera or includes the partition images. After reopening the app, Export
+diagnostics can select an existing request.private.json. Missing local images are
+reported explicitly. This improves diagnosis; it does not resolve an unknown
+partition change or bypass the restore boundary. Legacy USB factory recovery
+remains disabled in favor of version preparation followed by manual card recovery.
+Version stays 3.10. No new validation hashes or camera writes were added.
+
+
+Fix USB custom-sound Save rejecting a card-built preinstalled loader before its first
+configuration exists. Initialization requires an absent CSV, no existing owned audio files
+and no loaded custom-audio references. Damaged configurations and previous audio remain
+protected. Only fully completed read-only preparation failures can release their pending
+binding; unknown writes are never replayed. Publication order, the unselected shutter's
+audio and settings remain unchanged. This is a desktop-only fix; version stays 3.10.
+
+
+Normal firmware and stock-body recovery builds publish `BODYDATA.DAT` after the existing
+signature verification and complete decrypted readback succeed. Successful builds remove
+unpacked images, unsigned FDAT and temporary TAR files, preserving unrelated user files.
+SSH baselines, host keys and build records remain in the tool's job directory; the connection
+page selects the retained baseline. Failed builds retain their evidence. An original input
+named `BODYDATA.DAT` is protected from output replacement before any cleanup starts.
+Version remains 3.10, with no new validation hashes or camera/SD access.
+
+
 [Home](../../README.md) · [简体中文](../zh-CN/development.md)
 
 One overview for maintainers and AI agents. Read [AGENTS.md](../../AGENTS.md) first: it holds the rules that must not be broken. This page explains how the code fits together; for details, read the code it points to.
@@ -14,9 +92,11 @@ Native 3.0.5 coefficients remain unchanged. `looktool/dcpexport.py` reuses the
 project's camera-specific DCP authoring construction and the bundled Sony
 Camera ST calibration for new CUBE companions; it does not install a camera
 loader or write a device. The CLI and desktop adapter return both output paths.
-Windows distributes the default six once in `Profiles`, and resource
-checks resolve that external location. `profilepack.default_files` selects the
-six from the unchanged complete source library for both the spec and ZIP builder. Original calibration/profile assets
+Windows distributes six icon-bearing, camera-ready A7Look files once in `Profiles`.
+`profilepack.install_files` omits embedded RAW references, paired DCPs and duplicate
+plain/icon copies from this installer; the complete source/cloud library remains intact.
+The spec and ZIP builder share that selection, and built-ins resolve the external folder.
+Original calibration/profile assets
 retain their attribution and remain distribution assets, not new MIT source.
 
 The ordinary generator rebuilt the current unsigned 3.10 package. Its 84
@@ -113,7 +193,13 @@ compare registrations, retained payloads and decoded pixels rather than changing
 artwork to force encoded-file equality. Product logic and hash gates were not
 changed for this run; the test instance was saved and closed normally.
 
-Recovery uses the same USB/SSH selector as looks and sound, with USB selected initially. USB exposes the existing factory reset and restart continuation; SSH retains version-only correction. These transports do not imply identical recovery scope. The unavailable precapture option is omitted, and supported firmware features start selected.
+Recovery now prepares the native two-byte `dat4` version as 2.00 over USB or SSH,
+then leaves the card update to the user. USB no longer rewrites AP/CP through the
+old factory plan or resumes old loaded/reload records. A local recovery DAT keeps
+the official 2.01 body bytes, a 3.10 header and the current tool signature.
+Direct Sony-signed updates require restoring original updater trust separately;
+lowering the version does not restore trust. This fix has offline transaction and
+frozen-EXE routing coverage, with no camera access or complete card-recovery test.
 
 The firmware page separates the custom-look capability from its default-six
 or custom-file selection. Hidden custom drafts remain editable after switching
@@ -598,7 +684,7 @@ A replacement frontend only needs `jobs.new_job(action, arguments)` plus `jobs.w
 - `FINALIZING` adopts sound, installs the plugin and RAW mapping, and checks the persisted Vertical Display.
 - After a failure, a child that failed before any write gets a fresh `install-retry-*` plan. Unknown results stop with their evidence intact.
 
-**Factory restore:** `src/looks/assets/factory-layout-2.01.json` contains only offsets, lengths and original-content digests. `official.prepare_restore` obtains actual recovery bytes from a user-supplied official 2.01 file or a usable original same-body backup before USB opens. A local private reference supports the post-reload check; it is not a distribution asset. The same primary button starts recovery and then continues its final verification. Optional voice restoration is recorded in the transaction; skipping it retains the disable guard. Unrelated bytes/calibration are preserved.
+**Factory restore:** Use the version-preparation and manual card flow above. The old USB factory reset/resume and factory verification entry points are blocked before camera access; their code and diagnostic records remain historical evidence.
 
 **Optional current backup:** the recovery page can create an existing-format `checkpoint.private.zip` containing current AP/CP programs, live/saved settings and the 68 name resources. Its provenance is `current-project-backup`: it can be selected for rollback but is excluded from automatic earliest-original discovery. The optional `voice-resources.private.zip` contains the twenty captured voice-guide files; it supplies voice data when a selected rollback needs to remove the voice disable guard. Installation does not require a backup; factory recovery requires an explicit official/original source. Official voice resources can instead be prepared locally from the user's own 2.01 update with `desktopapp.screenreader`; the application does not bundle them. Voice restoration uses 1 MiB chunks into fixed staging names, checks the complete file digest and atomically publishes each file before removing the disable guard.
 
@@ -621,9 +707,9 @@ The desktop's unified custom Save carries `sound_target=mechanical/electronic/bo
 
 **Native portrait candidate:** `desktopapp.vertical_native` first retires legacy portrait edits through the existing inverse and asks for a cold reload. `verticaltool.nativeportrait` then builds independent `_23` image banks at the original IDs, using current body images and the existing drawn portrait shapes; it leaves `_32` horizontal banks and AP drawing code original. `resourceworker` admits only the three fixed bank paths and checks loaded original AP windows before copying; its native worker also requires the runtime display switch OFF for mutations. `verticalpersist.Stage` recognizes complete or partial managed files for disabling/restoration. Factory recovery releases these files before restoring voice audio, so the reclaimed voice space is available again. One-click setup pauses before its program/LUT phase if legacy migration needs a cold reload. This is an offline-tested candidate; it has not been physically accepted.
 
-**Look conversion:** `compilelook.py` evaluates DCP LookTable/tone curves or explicit ST/sRGB CUBEs; `compilehybrid.py` invokes `looktool/r5fit` for complete C2 native fitting. The bundled C2 Hybrid response JSON and frozen software color context replace the legacy virtual NPZ as the compiler input. Formal defaults are 2000 evaluations / 12 starts, up to five target-grid rounds and three frozen-Gamma stacked rounds. Frozen source copies and direct content comparisons protect resume; no new digest gate is added. The old virtual NPZ remains for legacy tools. No Lightroom is needed. See [LUT formats](lut-formats.md).
+**Look conversion:** `compilelook.py` evaluates DCP/CUBE targets and `compilehybrid.py` calls `looktool/r5fit`. The current adapter follows the author-supplied 2026-11-22 portable source and November 18 nonlinear response: 12 starts / 2000 evaluations, 8 adaptive rounds, 3 integer sweeps, target-polish parameter 2, up to 5 target-grid rounds and 3 frozen-Gamma stacked rounds. These are formal configuration values; their effect follows the original implementation. Old deburring is disabled by default. C2 builders, source splits and Gamma admissibility projection remain. No upstream digest gate is introduced. See [LUT formats](lut-formats.md).
 
-The published Hybrid inference/workbench is pinned to colorlab `06c3557`; its original Hybrid calibration experiment trainer is not fully published. C2 reuses its own previously calibrated nonlinear coordinates and fits its own quadratic base plus three conditional ridge experts. Do not describe that calibration adaptation as an unmodified run of an unpublished trainer. CPU and CUDA execution are reported separately from the author's AMD measurements. Historical chart TEST groups were already examined; they are not fresh physical validation. The compiler stores its Hybrid response selection independently so a saved legacy NPZ path cannot replace the new default.
+Operator coefficients match the supplied November 18 JSON. Latent inference, integer refinement, target-grid and principal native optimization functions were compared with the portable source. On the existing 2899-point C2 development probes, floating RGB8 train/validation/historical-test RMSE changes from 0.714/1.007/1.624 for old Hybrid to 0.551/0.593/0.623. This is not a fresh C2 calibration, independent scene test or physical camera qualification. The shared cloud converter and current Windows runtime are updated; older distribution archives have not been rebuilt.
 
 ## Build and test
 

@@ -108,10 +108,16 @@ class GridRenderer:
         from gpu_tensor import stencil_tensor
         self.tools=tools
         self.base=tools.tensor(base)
+        self.model=model
+        self.nonlinear=getattr(model,"nonlinear_grid",False)
+        if self.nonlinear:
+            self.prepared=model.prepare_tensor(tools,self.base)
+            return
         self.ids,self.mass=stencil_tensor(tools,model.coordinates_tensor(tools,self.base))
         self.response=tools.tensor(model.response(base))
 
     def __call__(self,grid):
+        if self.nonlinear:return self.model.apply_tensor(self.tools,self.base,grid,self.prepared)
         delta=(grid[self.ids]*self.mass[:,:,None]).sum(dim=1)
         return (self.base+self.tools.torch.einsum('nc,nco->no',delta,self.response)).clamp(0,1)
 

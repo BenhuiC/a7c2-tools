@@ -1,5 +1,160 @@
 # Changelog
 
+## 3.10 release preparation — 2026-11-23
+
+- Keep version 3.10 and six bundled camera-ready looks on Windows/macOS; macOS has no driver-installation step.
+- Use separate mechanical/electronic sound buffers, including when both refer to the same material. Reuse mechanical aliases and original reference release. Upgrade known earlier loaders through the same save API.
+- Keep the ordinary unified API, current native LUT/DCP converter, M4 portrait resources and live-status icons together in both packages.
+- Three physical single-shot RAM listening cases passed. Persistent sound cold loading and pre-capture concurrency remain outside that acceptance.
+
+
+## 3.10 — Authorized C2 library and nonlinear converter (2026-11-22)
+
+Sony Imaging Cloud adds 158 original authorized Hearts-Ace C2 looks, retaining
+the existing 41. A Panasonic reference based on Adobe S5 II Camera Standard adds
+A7Look/DCP/CUBE assets, bringing the curated total to 200. It is a reference,
+not the full factory RAW/JPEG renderer. The 158 imported looks have no matching
+DCP assets; no pairs are invented.
+
+Source, the current unpacked Windows runtime and the shared cloud converter use
+the November 22 portable nonlinear workflow, retaining C2 builders and Gamma
+constraints, disabling old deburring and excluding upstream hash gates. Older
+ZIP/DMG distributions are not rebuilt. The bundled six and firmware version
+remain unchanged. No camera operations were performed.
+
+## 3.10 — A7Look authoring guide and offline icon generator (2026-11-20)
+
+Document the existing /1 and /2 formats, signed planar packing, CUBE/DCP
+conversion and embedded artwork. Add a standalone browser tool at
+`dev/desktop/look-icon-generator.html`: generate text or import PNG, export
+26x19 grayscale PNG/icon JSON, or save artwork in an existing A7Look copy.
+The proposed short-ID change is deferred; no format or camera update is added.
+
+## 3.10 — Include camera SSH assets in the Mac package (2026-11-17)
+
+Fix firmware generation failing on a missing `desktop-assets/ssh/dropbear`.
+The Mac build now includes the same camera-side SSH binary, password configuration
+and license as Windows. Native package validation also runs the real firmware
+worker with official 2.01 input and default options through signed 3.10 output
+and existing full plaintext readback. No camera or card-flash acceptance is implied.
+
+## 3.10 — Native macOS package and driver-free guide (2026-11-16)
+
+- Use a three-step installation guide on macOS and keep native USB tools outside
+  the guide. Windows navigation is preserved.
+- Bundle the latest six native looks, current portrait status correction and
+  native image editing helpers. The Mac user does not need Python or Homebrew
+  to edit firmware images. Version remains 3.10; no camera operations occur.
+
+## 3.10 — Fixed-slot live status artwork (2026-11-16)
+
+The live-status translator now resolves an active fixed slot before its base-style
+lookup, so an ST backing recipe can display that slot's existing compact artwork.
+It shares the artwork already written by USB/Wi-Fi and keeps the M4 portrait panels.
+Native instruction checks cover all six slots, all 64 masks and factory/visibility
+fallbacks; physical portrait display acceptance is still pending. No color data,
+firmware version, new image IDs or memory region changes are included.
+
+## 3.10 — Shared camera API and compact transfer (2026-11-13)
+
+Daily look/sound writes and switches share the installed a7c2-api over USB and Wi-Fi. One info response supplies capabilities and task state for a whole look batch. Daily writes no longer require historical AP/CP copies, a host baseline or manual acknowledgement of old jobs. Android resolves known terminal states automatically; a lost reply triggers a status read, never a write replay.
+
+The compact look transport has no CRC32/SHA-256 trailer: full color is 3387 bytes, full color with artwork 4249, and legacy color with artwork 2186. A7Look /2 files and existing internal CP records are unchanged; existing internal serialization is not a new transport digest gate. Target bounds, structure and numeric ranges remain checked, followed by direct byte readback. Sound reuses bounded undo: synced temporary audio/CSV files are renamed into place, and failure restores original bytes or original absence.
+
+USB invokes the same static API in a temporary child, without replacing the App process or adding a resident service. Firmware generation includes the API even when SSH is unchecked, without enabling SSH. Windows remains native. Checks cover host files, AArch64 child processes and simulated connections only: no camera update, APK installation, cold-load listening or physical USB bridge acceptance. New clients need the matching camera API. Version remains 3.10 with six defaults; Sony signing and WBI rules are unchanged.
+
+## Historical candidate — Native FAT times during trust restoration (2026-11-13)
+
+Restore planning preserves the FAT creation/write time words of the native
+four-byte dat2/dat3 files. Those directory entries are located from the recorded
+FAT12 root, with the recorded allocation/directory layout unchanged. Every other
+out-of-plan byte still stops restoration. The preserved timestamps are copied
+from the current image, so their directory sector is not rewritten. Post-reload
+verification uses the same narrow rule; content changes still fail. A read-only
+physical rehearsal reproduced the old false rejection; successful restore and
+failure paths were exercised on captured bytes in host memory only. No actual
+trust restoration or flash-write/boot acceptance is claimed. Version stays3.10;
+no new validation hashes, startup hooks or in-camera UI were added.
+
+
+## 3.10 — Saved trust-restore failure diagnostics (2026-11-13)
+
+Trust restoration still stops before any partition write when bytes outside the
+recorded installation sectors differ. The failure now records the first differing
+byte, affected sector counts and bounded ranges. Support export can reconstruct
+this report from an older failed transaction's saved PC images; it never reconnects
+to the camera or includes the partition images. After reopening the app, Export
+diagnostics can select an existing request.private.json. Missing local images are
+reported explicitly. This improves diagnosis; it does not resolve an unknown
+partition change or bypass the restore boundary. Legacy USB factory recovery
+remains disabled in favor of version preparation followed by manual card recovery.
+Version stays 3.10. No new validation hashes or camera writes were added.
+
+
+## 3.10 — Look artwork in M4 portrait resources (2026-11-13)
+
+The camera look API and desktop SSH publisher use the selected M4 portrait resources
+without requiring or appending the retired custom portrait marker and digests. Native
+record, dimension and byte-bound checks remain. Only selected-slot artwork changes;
+other slots and M4 panel artwork remain intact. The CP source descriptor stays open
+through publication so VFAT inode recycling cannot trigger a false source-change error;
+existing identity and complete-byte checks remain.
+
+Accepted look transactions finish and persist their result after SSH/network HUP,
+TERM or PIPE signals; unknown results are never automatically resent. Icon staging
+keeps one original bank plus bounded append data, with about39MiB peak RSS in the
+targeted file tests. Signal loss, a closed response channel under a64MiB memory limit,
+and rollback on actual storage failure were checked separately from physical activation.
+The mobile write budget is120seconds and unconfirmed responses are shown as unknown.
+File updates still require battery removal for cold loading; no live refresh or camera prompt is added.
+
+## 3.10 — First custom sound with a preinstalled loader (2026-11-13)
+
+Fix USB custom-sound Save rejecting a card-built preinstalled loader before its first
+configuration exists. Initialization requires an absent CSV, no existing owned audio files
+and no loaded custom-audio references. Damaged configurations and previous audio remain
+protected. Only fully completed read-only preparation failures can release their pending
+binding; unknown writes are never replayed. Publication order, the unselected shutter's
+audio and settings remain unchanged. This is a desktop-only fix; version stays 3.10.
+
+
+## 3.10 — Final firmware filename and intermediate cleanup (2026-11-13)
+
+Normal firmware and stock-body recovery builds publish `BODYDATA.DAT` after the existing
+signature verification and complete decrypted readback succeed. Successful builds remove
+unpacked images, unsigned FDAT and temporary TAR files, preserving unrelated user files.
+SSH baselines, host keys and build records remain in the tool's job directory; the connection
+page selects the retained baseline. Failed builds retain their evidence. An original input
+named `BODYDATA.DAT` is protected from output replacement before any cleanup starts.
+Version remains 3.10, with no new validation hashes or camera/SD access.
+
+
+## 3.10 — Card-recovery routing fix (2026-11-13)
+
+Recovery now prepares the native two-byte `dat4` version as 2.00 over USB or SSH,
+then leaves the card update to the user. USB no longer rewrites AP/CP through the
+old factory plan or resumes old loaded/reload records. A local recovery DAT keeps
+the official 2.01 body bytes, a 3.10 header and the current tool signature.
+Direct Sony-signed updates require restoring original updater trust separately;
+lowering the version does not restore trust. This fix has offline transaction and
+frozen-EXE routing coverage, with no camera access or complete card-recovery test.
+
+
+## 3.10 — Windows firmware generation and save location (2026-11-13)
+
+Windows firmware generation uses bundled Windows image executables and the
+application's Python runtime. WSL and a Linux distribution are not required.
+An existing selected folder is used directly; prior build outputs are replaced
+without an extra directory or confirmation. Unrelated files are retained.
+
+## 3.10 — M4 portrait display resources (2026-11-13)
+
+The firmware generator now uses the M4 6.02 portrait image banks selected in
+the owner's A7C II trial, preserving the selected custom-look artwork. After
+replacing the three portrait files and removing the battery, the owner reported
+improved Creative Look panel borders. This does not qualify every portrait page.
+The version remains 3.10 and the preflash USB configuration workflow is unchanged.
+
 ## 3.10 — Paired export and separate distribution packs (2026-11-10)
 
 The version remains 3.10. Windows includes only the default six pairs.

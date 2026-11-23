@@ -38,6 +38,7 @@ def paired_tensor(tools, rgb, grid, response):
     model = get(response)
     if not hasattr(model, 'affine'):
         raise ValueError('GPU paired renderer requires the R5 affine response snapshot')
+    if getattr(model,'nonlinear_grid',False):return model.predict_tensor(tools,rgb,grid)
     coordinates = model.coordinates_tensor(tools, rgb)
     indices, weights = stencil_tensor(tools, coordinates)
     delta = (grid[indices] * weights[:, :, None]).sum(dim=1)

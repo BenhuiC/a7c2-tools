@@ -4,7 +4,13 @@
 
 **English** · [简体中文](README.zh-CN.md)
 
-## Current branches and delivery · 2026-11-11
+## 3.10 package update · 2026-11-23
+
+The 3.10 release candidate includes the current Windows and Apple Silicon Mac tools, six default icon-bearing looks, current LUT/DCP conversion, native firmware-image editing and the unified camera API. macOS has no driver-installation step. Custom shutter audio uses one buffer per shutter group: mechanical and electronic use two separate buffers even for the same clip; mechanical variants share their group buffer. The three single-shot RAM listening cases passed on the owner's camera. Persistent audio saving followed by a physical cold start remains unqualified; do not interpret package checks as that acceptance. Pre-capture stays outside the ordinary release.
+
+Source integration and the GitHub Release are being prepared; no published release has been replaced.
+
+## Current branches and delivery · 2026-11-23
 
 | Entry | Purpose |
 | --- | --- |
@@ -14,7 +20,7 @@
 | [Sony Imaging Cloud](https://sony.leonardsaikou.top) | Community looks and sounds; the website uses the new blue-and-white cloud logo. |
 
 **Keep the version at 3.10.** Its Windows package contains only the default six
-paired looks: **Fujifilm Classic Negative (NC), Classic Chrome (CC), Nostalgic
+camera-ready looks with icons: **Fujifilm Classic Negative (NC), Classic Chrome (CC), Nostalgic
 Negative (NN), Astia (AS), Ricoh Positive Film (RP), and Negative Film (RN)**.
 The full **41 DCP/A7Look pairs**, with their icon companions, are a separate
 resource pack for cloud distribution; they are not bundled into Windows.
@@ -31,7 +37,7 @@ Complete physical card updating, cold boot, video and long-term stability remain
 unqualified. Pre-capture remains a separate research effort and is not enabled
 in the ordinary generator.
 
-This branch contains the 3.10 development implementation. The legacy USB guide below is kept under `--legacy-usb`; fixed-firmware recovery uses a locally generated restore DAT.
+This branch contains the 3.10 development implementation. Successful builds output `BODYDATA.DAT` directly and remove build intermediates; only this DAT belongs on the SD card. The legacy USB guide below is kept under `--legacy-usb`; fixed-firmware recovery uses a locally generated restore DAT.
 
 
 
@@ -71,7 +77,7 @@ A desktop tool for the **Sony A7C II (ILCE-7CM2) on firmware 2.01**. It adds FL2
 2.01 source and original recovery input, install first trust through the existing
 computer flow, then use the generated firmware and subsequent file-only API/SSH
 updates. The current candidate preserves the Sony update key and the established
-WBI recipe. Factory recovery for the fixed layout uses a generated restore DAT;
+WBI recipe. Factory recovery prepares version 2.00 over USB/SSH, then uses a generated restore DAT in a manual card update;
 legacy USB regional restoration remains a separate workflow. See the
 [development guide](docs/en/development.md) for supported inputs and boundaries.
 
@@ -99,7 +105,7 @@ For other models, these independent projects may help. They are not part of this
 
 Each normal launch of the current development app shows a risk summary and requires manually accepting it before the interface opens. The linked [risk notice and use statement](docs/en/notices.md#risk-notice-and-use-statement) provides the full text. The tool is free and unofficial. The author opposes paid flashing and prohibits false claims of Sony/author authorization. Original project code uses the standard PolyForm Noncommercial License 1.0.0; third-party and earlier licenses are retained. Updating documentation does not update previously published packages.
 
-**Backups and recovery sources:** ordinary installation does not require a backup or a full firmware download. The recovery page offers an optional current-project backup, with voice data saved separately. To respect firmware copyright and reduce legal risks, including DMCA considerations, packages omit complete official firmware and original voice packs. All factory recovery requires a usable original same-body backup or **ILCE-7CM2 2.01 `BODYDATA.DAT`** obtained from Sony for local extraction. This policy does not establish authorization for every modification, guarantee recovery, or prevent litigation.
+**Backups and recovery sources:** ordinary installation does not require a backup or a full firmware download. Recovery uses version preparation and a manual card update; the old USB program-reset entry is disabled. To respect firmware copyright and reduce legal risks, including DMCA considerations, packages omit complete official firmware and original voice packs. Building a stock-body recovery DAT requires **ILCE-7CM2 2.01 `BODYDATA.DAT`** obtained from Sony for local extraction. This policy does not establish authorization for every modification, guarantee recovery, or prevent litigation.
 
 The interface is in Simplified Chinese. Button names below are given in Chinese with an English translation, so you can match them on screen.
 
@@ -146,8 +152,9 @@ The interface is in Simplified Chinese. Button names below are given in Chinese 
 | **Windows 10/11 x64** | `A7C2Tools-Windows-x64.zip` from [Releases](https://github.com/QAQLeonard/a7c2-tools/releases) | Extract the whole archive and run `A7C2Tools.exe`. Keep the `_internal` and `Profiles` folders next to it; don't copy the EXE out on its own. No Python install needed. |
 | **macOS 14+ (Apple Silicon)** | `A7C2Tools-macOS-arm64.dmg` from [Releases](https://github.com/QAQLeonard/a7c2-tools/releases) | Drag the app into Applications. It isn't signed by a developer, so allow it once under System Settings → Privacy & Security. No Intel build. **USB on a real Mac has not been verified yet.** |
 
-Version **3.10** stays unchanged. Windows includes **the default six DCP/A7Look pairs**, plus their artwork companions. The full 41-pair collection is packaged separately for Sony cloud distribution. Each DCP and ordinary A7Look share a filename stem and sit side by side. This update does not include a newly built macOS DMG.
+Version **3.10** stays unchanged. Windows includes **six camera-ready A7Look files with icons**, once each, without embedded RAW references or paired DCPs. The full 41-pair collection is packaged separately for Sony cloud distribution. This update does not include a newly built macOS DMG.
 - **Windows:** in the `Profiles` folder next to the EXE.
+- Windows firmware generation uses bundled local tools; no WSL, Ubuntu or separate Python installation is required. The selected save folder is used directly and previous build outputs are replaced.
 - **macOS:** inside the app. Open them with **打开内置 DCP／A7Look 配对库 (Open paired DCP/A7Look library)** on the Custom Creative Looks page.
 
 The `.a7look` goes into the camera; the matching `.dcp` is for RAW development in Lightroom.
@@ -295,21 +302,15 @@ On the app's **连接与驱动 (Connection & drivers)** page, the **用 Zadig �
 
 ### Step 2: Installed an earlier version? Restore factory functions first
 
-**If this camera has ever used any version of this project, restore factory functions before installing 3.0.** That includes FL23 v1.0/v2.x, looks imported with `lut.py`, `shutter.py` or `vertical.py`, and earlier desktop previews. This clears leftovers from older versions so 3.0 starts from a clean stock 2.01 state.
+To return to stock body programs, use the card-recovery page:
 
-A camera that was never modified can skip this step.
+1. Connect USB Mass Storage (or configured SSH) and set the version to **2.00**. This changes only the two-byte version metadata, not the body programs.
+2. Generate the recovery DAT locally from your official **2.01 BODYDATA.DAT**. It retains the **3.10** package header and uses the tool signature.
+3. After version write/readback has ended, follow the cold-restart dialog. Place the generated **BODYDATA.DAT** in the SD root and start the update manually from the camera menu.
+4. After the update and a normal start, check menus, shooting and playback. Metadata readback alone is not completed recovery.
 
-1. On the camera, switch Creative Look to **ST**.
-2. Open **恢复原厂功能 (Restore factory functions)**, select an original recovery source, optionally tick **同时恢复无障碍语音包 (Also restore Voice Guide audio)**, and click **开始一键恢复 (Start one-click recovery)**.
-   - Select official 2.01 firmware or a usable original same-body backup. The app ships a recovery layout, not original recovery bytes. Voice restoration is optional within this full recovery flow.
-   - Body calibration, counters and unrelated settings are kept.
-3. After the write and full readback, a dialog says **the restore is not finished yet**. Do a [cold reload](#before-you-start) and check that the camera shows a live view.
-4. Reconnect USB (Mass Storage) and click the same primary button, now labeled **继续完成一键恢复 (Continue and finish recovery)**. The restore is complete only when this check passes; the app then clears the old installation state.
-
-> [!WARNING]
-> Restoring sets all six custom slots to ST. Recipes you had in them **cannot be recovered**. Write down any settings you want to keep first.
-
-If recovery reports an error, preserve its diagnostic bundle. When the primary button says **继续完成一键恢复**, it verifies completed writes without flashing the programs again. Recovery from interruption or damage is not guaranteed.
+Direct Sony-signed packages require original updater trust restored from this body's first-trust backup. Version lowering alone does not restore trust.
+Old USB factory reset/resume is disabled; historical records are preserved. On errors, keep diagnostics and do not replay unknown writes.
 
 ### Step 3: One-click install
 
@@ -397,9 +398,7 @@ The new development-version mechanical custom-audio path has offline validation;
 
 ### Restore factory functions
 
-See [Step 2](#step-2-installed-an-earlier-version-restore-factory-functions-first). The advanced section also offers two other ways to restore:
-- Import a complete stock `BODYDATA.DAT` and restore from it.
-- Return to an earlier state from an old body backup (one made by older FL23 or `lut.py` versions).
+See [Step 2](#step-2-installed-an-earlier-version-restore-factory-functions-first). Current recovery prepares the version and uses a manual card update. It no longer applies an old USB program-reset plan. Historical body-backup tools remain under `--legacy-usb` only.
 
 ## Troubleshooting
 

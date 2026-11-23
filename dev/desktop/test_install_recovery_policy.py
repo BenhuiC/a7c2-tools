@@ -34,7 +34,7 @@ def test_no_factory_bytes_are_shipped_and_missing_source_never_opens_camera(tmp_
     value=official.layout()
     assert value['schema']=='a7c2-factory-layout/1' and 'zlib_base64' not in json.dumps(value)
     with patch.object(CheckpointCamera,'__enter__',side_effect=AssertionError('No camera')):
-        with pytest.raises(ValueError,match='恢复来源'):
+        with pytest.raises(ValueError,match='旧 USB'):
             worker.run('direct_factory_reset',dict(workspace=str(tmp_path),firmware='2.01',power_confirmed=True),tmp_path)
 
 
@@ -43,38 +43,26 @@ def test_standalone_voice_restore_is_removed_before_usb(tmp_path):
         worker.run('voice_restore',{},tmp_path)
 
 
-def test_one_primary_recovery_button_keeps_the_selected_voice_option(tmp_path,monkeypatch):
+def test_primary_recovery_prepares_version_for_card_instead_of_resuming_old_program_reset(tmp_path,monkeypatch):
     app=W.QApplication.instance() or W.QApplication([])
     monkeypatch.setenv('A7C2_DESKTOP_DATA',str(tmp_path/'data'))
     window=Window();window.timer.stop()
     try:
         assert window.setup_voice.isChecked() and not window.setup_voice.isEnabled()
-        assert window.findChild(W.QToolButton,'voiceCleanupHelp')
-        assert not any(b.objectName() in ('action_voice_cleanup','action_voice_restore') for b in window.buttons)
-        assert window.factory_button.text()=='开始一键恢复' and window.factory_voice.isChecked()
         assert type(window.recovery_transport) is type(window.look_transport)
         assert window.recovery_transport.value()=='usb'
-        assert not window.recovery_usb_panel.isHidden() and window.recovery_ssh_panel.isHidden()
+        assert '2.00' in window.factory_button.text()
+        assert not hasattr(window,'factory_voice')
+        with patch.object(window,'launch') as launch:window.factory_button.click()
+        assert launch.call_args.args[0]=='usb_restore_version'
+        folder=tmp_path/'old';folder.mkdir()
+        (folder/'direct.private.json').write_text(json.dumps(dict(phase='AWAITING_RELOAD',mode='factory_reset')))
+        window.fields['factory_failed_work'].setText(str(folder));window.refresh_factory_controls()
+        with patch.object(window,'launch') as launch:window.factory_button.click()
+        assert launch.call_args.args[0]=='usb_restore_version'
+        assert launch.call_args.args[1]['workspace']!=str(folder)
         window.recovery_transport.select('ssh')
         assert window.recovery_usb_panel.isHidden() and not window.recovery_ssh_panel.isHidden()
-        button=window.findChild(W.QPushButton,'action_ssh_restore_version')
-        with patch.object(window,'launch') as launch:button.click()
-        assert launch.call_args.args[0]=='ssh_restore_version'
-        window.recovery_transport.select('usb')
-        window.fields['factory_voice_firmware'].setText('user-owned.DAT')
-        window.factory_voice.setChecked(False)
-        with patch.object(window,'launch') as launch:window.factory_button.click()
-        assert launch.call_args.args[0]=='direct_factory_reset'
-        assert launch.call_args.args[1]['restore_voice'] is False
-        folder=tmp_path/'recovery';folder.mkdir()
-        (folder/'direct.private.json').write_text(json.dumps(dict(phase='AWAITING_RELOAD',restore_voice=False)))
-        window.fields['factory_failed_work'].setText(str(folder));window.refresh_factory_controls()
-        assert window.factory_button.text()=='继续完成一键恢复'
-        assert not window.factory_voice.isEnabled() and not window.factory_voice.isChecked()
-        with patch.object(window,'launch') as launch:window.factory_button.click()
-        assert launch.call_args.args[0]=='direct_verify'
-        assert launch.call_args.args[1]['workspace']==str(folder)
-        assert not any('重启后核对并完成恢复' in b.text() for b in window.buttons)
     finally:window.close()
 
 

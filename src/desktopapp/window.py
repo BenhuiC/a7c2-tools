@@ -1,4 +1,4 @@
-"""Six explicit workflows, background workers and a complete diagnostic log."""
+"""Current desktop workflows, shared workers and diagnostic logging."""
 from datetime import datetime
 import json
 from pathlib import Path
@@ -11,14 +11,18 @@ from . import presets
 from . import reloadguide
 from .disclaimer import require_consent
 
-DRIVER_HINT = ('\n驱动或连接没有成功：先在“连接与驱动”页卸载驱动后重装；仍不行，'
+DRIVER_HINT = ('\n驱动或连接没有成功：先在“安装驱动”页卸载驱动后重装；仍不行，'
                '可点该页的“用 Zadig 手动安装驱动”，按说明给 0E8A 和 0336 两个身份分别装 libusbK。')
 from . import connectionguide
 from .paths import ROOT, data_root, load_settings, write_json
 from .theme import WINDOW as STYLE, asset
 
-# Sidebar glyphs for the current navigation (page index → assets/nav/*.svg).
-NAV_ICONS = {1:'driver',11:'trust',9:'firmware',4:'looks',6:'sound',2:'restore',10:'connection'}
+NAVIGATION = (
+    ('install','安装向导','firmware'),('drivers','安装驱动','driver'),
+    ('trust','首次授信','trust'),('firmware','生成固件','firmware'),
+    ('looks','滤镜','looks'),('sound','快门音效','sound'),
+    ('recovery','一键恢复','restore'),('advanced','高级设置','connection'),
+)
 
 
 class TransportChoice(W.QWidget):
@@ -48,8 +52,7 @@ class TransportChoice(W.QWidget):
 class Window(W.QMainWindow):
     def __init__(self, *, demo=False):
         super().__init__()
-        self.setWindowTitle('A7C II Tools · LUT Preview Test 3' if '--preview-gate-test' in sys.argv else
-                            'A7C II Tools · Desktop Preview')
+        self.setWindowTitle('A7C II Tools · '+VERSION)
         self.setWindowIcon(QtGui.QIcon(asset('mark.png')))
         self.resize(1180, 860)
         self.setMinimumSize(960, 730)
@@ -97,18 +100,16 @@ class Window(W.QMainWindow):
         self.nav.setIconSize(QtCore.QSize(18, 18))
         self.nav.setFocusPolicy(QtCore.Qt.NoFocus)
         self.nav.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-        self.nav.addItems(['旧版 · 一键安装', '旧版 · 连接与驱动', '旧版 · 恢复原厂功能', '旧版 · FL2 / FL3', '旧版 · 自定义创意外观', '旧版 · 竖屏显示', '旧版 · 快门声音', '旧版 · 白平衡', '开发调试 · SSH', '本地固件 · 卡刷候选', '滤镜与音效 · SSH'])
-        self.nav.addItem('首次授信')
-        self.nav_items=[self.nav.item(index) for index in range(self.nav.count())]
-        for index,item in enumerate(self.nav_items):item.setData(QtCore.Qt.UserRole,index)
-        if '--legacy-usb' not in sys.argv:
-            for index,name in NAV_ICONS.items():
-                self.nav_items[index].setIcon(QtGui.QIcon(asset('nav/'+name+'.svg')))
-        for item in self.nav_items:item.setSizeHint(QtCore.QSize(0, 36))
+        self.nav_items={}
+        for key,title,icon in NAVIGATION:
+            if key=='drivers'and sys.platform=='darwin':title='USB 连接'
+            item=W.QListWidgetItem(QtGui.QIcon(asset('nav/'+icon+'.svg')),title)
+            item.setData(QtCore.Qt.UserRole,key);item.setSizeHint(QtCore.QSize(0,36))
+            self.nav.addItem(item);self.nav_items[key]=item
         side.addWidget(self.nav, 1)
         base = W.QHBoxLayout()
         base.setContentsMargins(8, 10, 2, 0)
-        caption = W.QLabel('固件版本' if '--legacy-usb' in sys.argv else '原厂基础版本')
+        caption = W.QLabel('原厂基础版本')
         caption.setObjectName('sidebarCaption')
         base.addWidget(caption)
         base.addStretch()
@@ -121,33 +122,18 @@ class Window(W.QMainWindow):
         right.setContentsMargins(0, 0, 0, 0)
         right.setSpacing(0)
         layout.addLayout(right, 1)
-        self.description.setText(('Windows 测试版' if sys.platform == 'win32' else '桌面开发版') +
-            (' · 一键安装与独立功能入口 · ' if '--legacy-usb' in sys.argv else ' · 本地固件与 SSH 更新候选 · ') + VERSION)
         self.pages = W.QStackedWidget()
         right.addWidget(self.pages, 1)
-        self.home_page()
-        self.connection_page()
-        self.recovery_page()
-        self.fl23_page()
-        self.look_page()
-        self.vertical_page()
-        self.sound_page()
-        self.whitebalance_page()
-        self.ssh_page()
-        self.firmware_page()
-        self.ssh_updates_page()
-        self.trust_page()
-        self.nav.currentItemChanged.connect(lambda item,previous:self.pages.setCurrentIndex(item.data(QtCore.Qt.UserRole)) if item else None)
-        if '--legacy-usb' not in sys.argv:
-            order=(1,11,9,4,6,2,10,0,3,5,7,8)
-            while self.nav.count():self.nav.takeItem(0)
-            for index in order:self.nav.addItem(self.nav_items[index])
-            titles={1:'安装驱动',11:'首次授信',9:'生成固件',4:'滤镜',6:'快门音效',2:'一键恢复',10:'连接设置'}
-            for index,item in enumerate(self.nav_items):
-                item.setHidden(index not in titles)
-                if index in titles:item.setText(titles[index])
+        self.page_widgets={}
+        builders=(('install',self.install_guide_page),('drivers',self.connection_page),
+                  ('recovery',self.recovery_page),('looks',self.look_page),('sound',self.sound_page),
+                  ('firmware',self.firmware_page),('trust',self.trust_page),('advanced',self.advanced_settings_page))
+        for key,build in builders:
+            build();self.page_widgets[key]=self.pages.widget(self.pages.count()-1)
+        self.install_guide.bind()
+        self.nav.currentItemChanged.connect(lambda item,previous:self.show_page(item.data(QtCore.Qt.UserRole))if item else None)
         self.description.setText('电脑端制作与编辑\nSSH / USB 更新 · ' + VERSION)
-        self.select_page(0 if '--legacy-usb' in sys.argv else 9)
+        self.select_page('install')
         self.polish_pages()
         footer = W.QFrame()
         footer.setObjectName('footer')
@@ -166,7 +152,7 @@ class Window(W.QMainWindow):
         self.status_dot.setObjectName('statusDot')
         bottom.addWidget(self.status_dot, 0, QtCore.Qt.AlignVCenter)
         bottom.addSpacing(2)
-        self.status = W.QLabel('就绪。选择左侧功能；启动软件不会访问相机。')
+        self.status = W.QLabel('就绪。请按安装向导逐步操作；启动软件不会访问相机。')
         self.status.setObjectName('statusText')
         self.status.setWordWrap(True)
         self.status.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
@@ -229,8 +215,13 @@ class Window(W.QMainWindow):
         self.pages.addWidget(wrapper)
         return layout
 
-    def select_page(self,index):
-        self.nav.setCurrentItem(self.nav_items[index])
+    def select_page(self,key):
+        self.nav.setCurrentItem(self.nav_items[key])
+
+    def show_page(self,key):
+        self.install_guide.mount(key=='install')
+        self.pages.setCurrentWidget(self.page_widgets[key])
+        self.install_guide.refresh()
 
     def box(self, layout, title):
         group = W.QGroupBox(title)
@@ -328,201 +319,22 @@ class Window(W.QMainWindow):
         work = self.work(group)
         return dict(self.common(), workspace=work, **{key: value for key, value in values.items() if key != 'mode'})
 
-    def setup_args(self):
-        root = self.settings.get('setup_work', '')
-        state = Path(root, 'setup.private.json') if root else None
-        if state is not None and state.is_file():
-            saved = json.loads(state.read_text(encoding='utf-8'))
-            if saved['phase'] != 'COMPLETE':
-                return dict(self.common(), workspace=root, options=saved['options'])
-        root = self.work('setup')
-        tool = ROOT / ('desktop-assets/exiftool/exiftool.exe' if sys.platform=='win32' else 'desktop-assets/exiftool/exiftool')
-        looks = [dict(slot=s, path=self.text('setup_look_' + str(s))) for s in range(1, 7) if self.text('setup_look_' + str(s))]
-        options = dict(fl23=self.setup_fl23.isChecked(), sound=self.setup_sound.isChecked(),
-            vertical=self.setup_vertical.isChecked(), plugin=self.setup_plugin.isChecked(),
-            exiftool=str(tool), looks=[] if self.setup_presets.isChecked() else looks,
-            preset_pack=presets.PACK if self.setup_presets.isChecked() else None)
-        options['voice_cleanup_policy']=1
-        return dict(self.common(), workspace=root, options=options)
 
-    def home_page(self):
-        layout = self.page('一键安装', '六款外观、FL2／FL3、电子快门声及竖屏保存开关合并安装。按提示断电重开后，同一按钮只核对加载；无需逐槽安装。')
-        self.setup_presets = W.QCheckBox('安装内置六款外观（替换自订 1–6，原有创意外观保留）')
-        self.setup_presets.setChecked(True)
-        self.setup_fl23 = W.QCheckBox('启用 FL2／FL3'); self.setup_fl23.setChecked(True)
-        self.setup_sound = W.QCheckBox('启用索尼原生电子快门声音'); self.setup_sound.setChecked(True)
-        self.setup_vertical = W.QCheckBox('保存开启竖屏拍摄信息显示（重开后自动生效）'); self.setup_vertical.setChecked(True)
-        self.setup_voice=W.QCheckBox('清理无障碍语音包，并将语音指南置灰（安装必选）')
-        self.setup_voice.setChecked(True);self.setup_voice.setEnabled(False)
-        self.setup_voice.setToolTip('删除十种语言的菜单朗读音频，约释放 283 MiB；不删除对焦提示音或快门声音。只能通过一键恢复补回。')
-        self.setup_plugin = W.QCheckBox('安装 Lightroom 自动识别插件（需要 Lightroom）')
-        prior_path=Path(self.settings.get('setup_work',''),'setup.private.json')
-        prior=json.loads(prior_path.read_text(encoding='utf-8')) if prior_path.is_file() else {}
-        if prior and prior.get('phase')!='COMPLETE':
-            options=prior['options']
-            self.setup_presets.setChecked(options.get('preset_pack') == presets.PACK)
-            for box,key in ((self.setup_fl23,'fl23'),(self.setup_sound,'sound'),(self.setup_vertical,'vertical'),(self.setup_plugin,'plugin')):
-                box.setChecked(bool(options.get(key,key!='plugin')))
-            for box in (self.setup_presets,self.setup_fl23,self.setup_sound,self.setup_vertical,self.setup_plugin):box.setEnabled(False)
+    def install_guide_page(self):
+        from .installguide import InstallGuide
+        layout=self.page('安装向导','跟着下面的四步完成 3.10 安装。已有驱动或已授信的相机，可以直接下一步。')
+        layout.parentWidget().parentWidget().layout().setContentsMargins(28,22,28,20)
+        self.install_guide=InstallGuide(self);layout.addWidget(self.install_guide,0,QtCore.Qt.AlignTop);layout.addStretch()
 
-        self.setup_note=W.QLabel('安装尚未结束，请点击“继续安装”，按弹窗完成下一步；需要断电时，接回 USB 后仍点击此按钮。')
-        self.setup_note.setWordWrap(True);self.setup_note.setProperty('callout',True)
-        self.setup_note.setVisible(bool(prior) and prior.get('phase')!='COMPLETE')
-        layout.addWidget(self.setup_note)
-        layout.addWidget(self.setup_presets)
-        self.setup_preset_summary = W.QLabel(presets.SUMMARY)
-        self.setup_preset_summary.setWordWrap(True)
-        if prior and prior.get('phase')!='COMPLETE':
-            names = ['%s %s' % (r['slot'], r.get('name', Path(r['path']).stem)) for r in prior['options'].get('looks', [])]
-            self.setup_preset_summary.setText('本次已保存外观：' + (' · '.join(names) if names else '未选择外观，不会新增六款'))
-        else:
-            self.setup_preset_summary.setEnabled(self.setup_presets.isChecked())
-            self.setup_presets.toggled.connect(self.setup_preset_summary.setEnabled)
-        layout.addWidget(self.setup_preset_summary)
-        for check in (self.setup_fl23, self.setup_sound, self.setup_vertical, self.setup_plugin):layout.addWidget(check)
-        voice_row=W.QHBoxLayout();voice_row.addWidget(self.setup_voice)
-        voice_help=W.QToolButton();voice_help.setText('？');voice_help.setObjectName('voiceCleanupHelp')
-        voice_help.setToolTip(self.setup_voice.toolTip())
-        voice_help.clicked.connect(lambda:W.QMessageBox.information(self,'无障碍语音包是什么',
-            '这是相机为视障使用者提供的菜单朗读／语音指南，包含十种语言的音频，约占 283 MiB。\n\n'
-            '一键安装会关闭语音指南、将相关机内选项置灰，重开核对后删除音频，为竖屏等资源腾出空间。'
-            '不会删除语言索引、对焦提示音、原生快门声或自定义电子快门音效。\n\n'
-            '该项属于新安装方案，不能取消。仅“一键恢复原厂功能”会从用户的官方固件或可用同机备份补回；机内初始化不能恢复。'
-            '需要语音指南辅助操作的用户请勿使用本安装方案。'))
-        voice_row.addWidget(voice_help);voice_row.addStretch();layout.addLayout(voice_row)
-        source_notice=W.QLabel('备份与恢复来源：可在“恢复原厂功能”页备份当前项目与语音。'
-            '为尊重原厂版权、降低包括 DMCA 在内的法律风险，安装包不附带完整官方固件或原厂语音包。'
-            '一键恢复的程序、设置及语音来源由你提供：使用可用同机原始备份，或自行从索尼官方下载 ILCE-7CM2 2.01 BODYDATA.DAT。'
-            '普通安装不强制先备份或下载；恢复也不保证能救回无法开机的相机。')
-        source_notice.setObjectName('setupRecoverySourceNotice');source_notice.setWordWrap(True)
-        layout.addWidget(source_notice)
-        recovery_source=W.QPushButton('查看可选备份与官方固件恢复来源')
-        recovery_source.clicked.connect(lambda:self.select_page(2))
-        layout.addWidget(recovery_source);self.buttons.append(recovery_source)
-        self.setup_button=self.button(layout, '开始新的一键安装' if prior.get('phase')=='COMPLETE' else '继续安装' if prior else '一键安装',
-                                      'setup_all', self.setup_args, primary=True)
-        self.setup_result_button=W.QPushButton('查看上次安装结果（不连接相机）')
-        self.setup_result_button.clicked.connect(self.show_setup_result)
-        self.setup_result_button.setVisible(prior.get('phase')=='COMPLETE')
-        layout.addWidget(self.setup_result_button);self.buttons.append(self.setup_result_button)
-        look_section=self.advanced(layout,'改用自己的 A7Look 文件（先取消勾选内置六款）')
-        custom_container = self.setup_custom_container = look_section.parentWidget()
-        custom_container.setEnabled(not self.setup_presets.isChecked() and not (prior and prior.get('phase')!='COMPLETE'))
-        self.setup_presets.toggled.connect(lambda enabled: custom_container.setEnabled(not enabled))
-        form = self.box(look_section, '选择 A7Look 文件')
-        for slot in range(1, 7):
-            self.field(form, 'setup_look_' + str(slot), '自订 ' + str(slot), kind='file', filter='Compiled looks (*.a7look)')
-        compile_button = W.QPushButton('从 DCP／LUT 生成 A7Look…')
-        compile_button.clicked.connect(self.compiler_dialog); look_section.addWidget(compile_button); self.buttons.append(compile_button)
-        hint = W.QLabel('恢复出厂、卸载驱动和删除外观不会混入安装流程。自定义声音请在“快门声音”中转换后选择机械／电子／两者并保存，试听可选。')
-        hint.setWordWrap(True); layout.addWidget(hint); layout.addStretch()
 
-    def drivers_first(self, arguments):
-        """Suggest the connection page before a first one-click install on Windows."""
-        if (sys.platform != 'win32' or self.settings.get('connection_verified')
-                or Path(arguments.get('workspace', ''), 'setup.private.json').is_file()):
-            return True
-        choice = self.ask_drivers_first()
-        if choice == 'drivers':
-            self.select_page(1)
-        return choice == 'continue'
+    def driver_step_failed(self,action):
+        return action in ('usb_prepare','connect','driver_install')
 
-    def ask_drivers_first(self):
-        box = W.QMessageBox(self)
-        box.setWindowTitle('建议先安装驱动')
-        box.setText('这台电脑还没有成功连接过相机。建议先到“连接与驱动”页，点“准备两阶段驱动并测试连接”，'
-                    '看到连接成功后再回来一键安装。')
-        box.setInformativeText('一键安装也会自动尝试安装驱动，但驱动失败时排查更麻烦。'
-                               '驱动反复装不上，可点该页的“用 Zadig 手动安装驱动”，按说明操作。')
-        go = box.addButton('先去安装驱动', W.QMessageBox.AcceptRole)
-        box.addButton('直接一键安装', W.QMessageBox.DestructiveRole)
-        cancel = box.addButton(W.QMessageBox.Cancel)
-        box.setDefaultButton(go)
-        box.exec()
-        return 'drivers' if box.clickedButton() is go else 'cancel' if box.clickedButton() is cancel else 'continue'
 
-    def driver_step_failed(self, action):
-        if action in ('usb_prepare', 'connect', 'driver_install'):
-            return True
-        if action != 'setup_all':
-            return False
-        try:
-            state = json.loads(Path(self.settings.get('setup_work', ''), 'setup.private.json').read_text(encoding='utf-8'))
-        except (OSError, ValueError):
-            return False
-        return 'drivers' not in state.get('completed_steps', [])
+    def show_reload_guide(self, *, mode=None):
+        title='授信已写入，请继续刷前配置'if mode=='trust_install'else'读写已结束，请断电重开'
+        W.QMessageBox.information(self, title, reloadguide.text(mode=mode))
 
-    def direct_verify_args(self, group, accepted=False):
-        workspace=self.settings.get(group + '_direct_work', '')
-        args={'workspace': workspace, 'accepted': accepted}
-        if group=='factory':args.update(workspace=self.text('factory_failed_work') or workspace,factory_verify=True)
-        return args
-
-    def show_setup_result(self):
-        from .completion import archive_error,text
-        path=Path(self.settings.get('setup_work',''),'setup.private.json')
-        if not path.is_file():return
-        state=json.loads(path.read_text(encoding='utf-8'))
-        if state.get('phase')!='COMPLETE':
-            W.QMessageBox.information(self,'安装尚未结束','请点首页“继续安装”，按提示完成后续步骤。')
-            return
-        if archive_error(state):write_json(path,state)
-        W.QMessageBox.information(self,'安装完成',text(state))
-
-    def refresh_setup_controls(self):
-        path=Path(self.settings.get('setup_work',''),'setup.private.json')
-        state=json.loads(path.read_text(encoding='utf-8')) if path.is_file() else {}
-        pending=bool(state) and state.get('phase')!='COMPLETE'
-        self.setup_button.setText('继续安装' if pending else '开始新的一键安装' if state else '一键安装')
-        self.setup_result_button.setVisible(state.get('phase')=='COMPLETE')
-        self.setup_note.setVisible(pending)
-        self.setup_custom_container.setEnabled(not pending and not self.setup_presets.isChecked() and self.process is None)
-        if not state:
-            self.setup_preset_summary.setText(presets.SUMMARY)
-            self.setup_preset_summary.setEnabled(self.setup_presets.isChecked())
-        for box in (self.setup_presets,self.setup_fl23,self.setup_sound,self.setup_vertical,self.setup_plugin):
-            box.setEnabled(not pending and self.process is None)
-
-    def clear_installation_state(self, verified=True):
-        # Clear active navigation/resume pointers, not diagnostic evidence or
-        # user source files. A verified factory reset invalidates these plans.
-        # Before verification only the sound records are retired: the restore
-        # has already returned every sound program window to stock.
-        if verified:
-            for key in ('setup_work','fl23_direct_work','look_direct_work',
-                        'look_resume_source','look_job_dir'):
-                self.settings.pop(key,None)
-            self._look_displayed_pending=None
-            self.look_editor.set_operations([])
-            self.fl23_accept.setChecked(False)
-        self.sound_accept.setChecked(False)
-        # The old sound workspace describes the pre-reset camera installation.
-        # Start fresh while retaining its files and the selected source clip.
-        sound=self.work('sound')
-        for key,value in (('sound_work',sound),('sound_backup',sound+'-backup')):
-            self.fields[key].setText(value);self.settings[key]=value
-        write_json(data_root()/'desktop.json',self.settings)
-        self.log.appendPlainText('原厂恢复已核对通过；已清除旧安装状态。历史诊断日志保留，新安装从头开始。' if verified else
-                                 '原厂恢复写入已完成；旧的声音记录已停用（文件保留），之后的声音操作不再受它们影响。')
-
-    def reload_controls(self, layout, checks):
-        guide = W.QPushButton('如何断电重开？查看详细步骤')
-        guide.clicked.connect(lambda: self.show_reload_guide())
-        layout.addWidget(guide)
-        self.buttons.append(guide)
-        confirm = W.QCheckBox('已拔 USB、等灯停、关机，取下电池至少 1 分钟后重开；\n已确认' + checks)
-        confirm.setToolTip(reloadguide.text())
-        layout.addWidget(confirm)
-        return confirm
-
-    def show_reload_guide(self, *, setup=False, mode=None):
-        title = ('恢复尚未完成，请重启后核对' if mode=='factory_reset' else
-                 '试听结果已记录，请断电恢复原声' if mode=='sound_confirm' else '读写已结束，请断电重开')
-        W.QMessageBox.information(self, title, reloadguide.text(setup=setup, mode=mode))
-
-    def show_connection_notice(self):
-        if '--legacy-usb' not in sys.argv:return
-        W.QMessageBox.information(self,connectionguide.TITLE,connectionguide.TEXT)
 
     def field(self, form, key, label, *, kind=None, filter='All files (*)', value=''):
         line = W.QLineEdit(str(self.settings.get(key, value)))
@@ -568,14 +380,14 @@ class Window(W.QMainWindow):
         return str(data_root() / 'work' / (datetime.now().strftime('%Y%m%d-%H%M%S') + '-' + label + '-' + uuid.uuid4().hex[:5]))
 
     def connection_page(self):
-        layout = self.page('安装驱动与 USB 连接', '相机开机并选择“海量存储／Mass Storage”，使用可传数据的 USB 线。一次只连接一台相机。')
+        layout = self.page('USB 连接' if sys.platform=='darwin' else '安装驱动与 USB 连接', '相机开机并选择“海量存储／Mass Storage”，使用可传数据的 USB 线。一次只连接一台相机。')
         form = self.box(layout, 'USB 连接')
         self.driver_identity = W.QComboBox()
         self.driver_identity.addItems(['普通连接 · 054C:0E8A', '服务连接 · 054C:0336'])
-        form.addRow('驱动目标', self.driver_identity)
+        form.addRow('连接身份' if sys.platform=='darwin' else '驱动目标', self.driver_identity)
         if sys.platform == 'darwin':
             self.field(form, 'mac_volume', 'macOS 相机存储卷', kind='folder', value='/Volumes/')
-        self.button(layout, '检测相机与驱动', 'driver_scan')
+        self.button(layout, '检测相机' if sys.platform=='darwin' else '检测相机与驱动', 'driver_scan')
         if sys.platform == 'win32':
             # Manual Zadig installation sits beside the automatic one: many
             # computers where the automatic install fails succeed with it.
@@ -606,14 +418,30 @@ class Window(W.QMainWindow):
         layout.addStretch()
 
     def recovery_page(self):
-        layout=self.page('一键恢复','通过 USB 恢复原厂功能；通过 SSH 修正更新器版本号。')
+        layout=self.page('一键恢复','先将版本设为 2.00，再手动卡刷原厂内容恢复包。')
         self.recovery_transport=self.transport_controls(layout,'recovery')
+        self.recovery_transport.usb.setText('USB · 版本准备')
         self.recovery_usb_panel=W.QWidget();self.recovery_usb_panel.setObjectName('recoveryUsbPanel')
         usb=W.QVBoxLayout(self.recovery_usb_panel);usb.setContentsMargins(0,0,0,0);usb.setSpacing(10)
         self.recovery_usb_controls(usb);layout.addWidget(self.recovery_usb_panel)
         self.recovery_ssh_panel=W.QWidget();self.recovery_ssh_panel.setObjectName('recoverySshPanel')
         ssh=W.QVBoxLayout(self.recovery_ssh_panel);ssh.setContentsMargins(0,0,0,0);ssh.setSpacing(10)
         self.recovery_ssh_controls(ssh);layout.addWidget(self.recovery_ssh_panel)
+        form=self.box(layout,'2. 生成原厂内容恢复包 · 电脑离线完成')
+        self.field(form,'factory_voice_firmware','官方 2.01 BODYDATA.DAT',kind='file',filter='Sony firmware (*.DAT)')
+        self.field(form,'factory_package_output','保存位置',value=self.work('factory-firmware'),kind='directory')
+        self.button(layout,'生成原厂内容恢复包','firmware_factory_build',
+            lambda:dict(sony_firmware=self.text('factory_voice_firmware'),workspace=self.text('factory_package_output'),automatic_identity=True),primary=True)
+        download=W.QPushButton('打开索尼官方 2.01 固件下载页')
+        from .screenreader import DOWNLOAD_URL
+        download.clicked.connect(lambda:QtGui.QDesktopServices.openUrl(QtCore.QUrl(DOWNLOAD_URL)))
+        layout.addWidget(download);self.buttons.append(download)
+        note=W.QLabel('3. 版本准备完成并按提示重开后，将生成的 BODYDATA.DAT 放到 SD 卡根目录，'
+            '在相机菜单手动更新。完成后检查菜单、拍摄与回放。\n'
+            '恢复包保留官方 2.01 的机身程序、资源与包头版本，使用当前工具签名。'
+            '单独修改版本号不会恢复原厂授信。')
+        note.setWordWrap(True);layout.addWidget(note)
+        layout.addStretch()
         self.recovery_transport.changed.connect(self.refresh_recovery_transport)
         self.refresh_recovery_transport();self.refresh_factory_controls()
 
@@ -621,174 +449,58 @@ class Window(W.QMainWindow):
         usb=self.recovery_transport.value()=='usb'
         self.recovery_usb_panel.setVisible(usb);self.recovery_ssh_panel.setVisible(not usb)
 
+    def advanced_settings_page(self):
+        layout=self.page('高级设置','连接设置与 USB 版本修改。日常安装请使用“安装向导”。')
+        self.connection_settings_controls(layout)
+        form=self.box(layout,'通过 USB 修改版本号')
+        self.field(form,'usb_version_target','目标版本',value='2.00')
+        self.button(layout,'通过 USB 修改版本号','usb_set_version',
+            lambda:dict(self.common(),workspace=self.work('usb-version'),target_version=self.text('usb_version_target')))
+        note=W.QLabel('只修改版本资料，不更换程序或功能。格式如 2.00、2.01、3.10。恢复官方 2.01 前请设为 2.00。')
+        note.setWordWrap(True);layout.addWidget(note);layout.addStretch()
+
     def recovery_ssh_controls(self,layout):
-        form=self.box(layout,'版本号修正 · SSH')
-        self.field(form,'factory_version_source','当前研究版本',value='3.01')
+        form=self.box(layout,'1. 将版本设为 2.00 · SSH')
+        self.field(form,'factory_version_source','当前版本',value=VERSION)
         form.addRow('目标版本',W.QLabel('2.00'))
-        row=W.QHBoxLayout();layout.addLayout(row)
-        self.button(row,'通过 SSH 将版本号改回 2.00','ssh_restore_version',
+        self.button(layout,'通过 SSH 将版本设为 2.00','ssh_restore_version',
             lambda:dict(self.ssh_update_args(),workspace=self.work('version-restore'),source_version=self.text('factory_version_source')),primary=True)
-        settings=W.QPushButton('SSH 连接设置…');settings.clicked.connect(lambda:self.select_page(10))
-        row.addWidget(settings);self.buttons.append(settings)
-        note=W.QLabel('这里只修正版本号。原厂授信恢复入口在“首次授信”页，必须使用本机安装备份；实际官方卡刷仍待验收。')
-        note.setWordWrap(True);layout.addWidget(note)
-        self.button(layout,'重开后核对本次版本号修正','ssh_verify_update',
+        settings=W.QPushButton('SSH 连接设置…');settings.clicked.connect(lambda:self.select_page('advanced'))
+        layout.addWidget(settings);self.buttons.append(settings)
+        self.button(layout,'重开后核对本次 SSH 版本准备（可选）','ssh_verify_update',
             lambda:dict(self.ssh_update_args(),workspace=self.settings.get('factory_version_work','')))
-        optional=self.advanced(layout,'其他恢复工具 · 生成离线候选')
-        form=self.box(optional,'原厂程序与资源来源')
-        self.field(form,'factory_package_source','官方 2.01 BODYDATA.DAT',kind='file',filter='Sony firmware (*.DAT)')
-        self.field(form,'factory_package_output','新的输出目录',value=self.work('factory-firmware'),kind='directory')
-        self.button(optional,'生成原厂程序与资源恢复候选','firmware_factory_build',
-            lambda:dict(sony_firmware=self.text('factory_package_source'),workspace=self.text('factory_package_output'),automatic_identity=True),primary=True)
-        note=W.QLabel('恢复包包含完整原厂机身程序和资源。更新器公钥恢复与实际卡刷尚未验收；此入口只生成本地候选，不执行旧 USB 恢复。')
-        note.setWordWrap(True);optional.addWidget(note);layout.addStretch()
 
     def recovery_usb_controls(self,layout):
-        note=W.QLabel('恢复本项目功能：六槽回 ST、快门回机械、关闭静音模式和新增电子音效。保留机身校准；语音包可选择同时恢复。')
+        note=W.QLabel('1. 连接相机 USB 海量存储，将更新器版本资料设为 2.00。'
+            '这一步仅修改两字节版本资料，机身程序由后续卡刷恢复。')
         note.setWordWrap(True);layout.addWidget(note)
-        original=self.box(layout,'恢复来源（程序、设置及所选语音均从你的本地文件取得）')
-        self.field(original,'factory_voice_firmware','官方 2.01 BODYDATA.DAT',kind='file',filter='Sony firmware (*.DAT *.bin);;All files (*)')
-        self.field(original,'factory_original_backup','或：同机原始备份',kind='file',filter='Backup (*.zip);;All files (*)')
-        source_notice=W.QLabel('应用不内置原厂恢复文件。为尊重版权、降低包括 DMCA 在内的法律风险，一键恢复需使用你自行取得的官方 2.01 固件，或可用的同机原始备份。'
-            '普通安装不要求预先下载；这项说明适用于所有原厂恢复，不仅是语音包。')
-        source_notice.setWordWrap(True);layout.addWidget(source_notice)
-        local_config=data_root()/'local-recovery-source.private.json'
-        if local_config.is_file():
-            local_note=W.QLabel('本机测试：已配置本地原厂来源，以上留空也可恢复；手动选择文件优先，不跳过恢复与读回。')
-            local_note.setWordWrap(True);layout.addWidget(local_note)
-        download=W.QPushButton('打开索尼官方 2.01 固件下载页')
-        from .screenreader import DOWNLOAD_URL
-        download.clicked.connect(lambda:QtGui.QDesktopServices.openUrl(QtCore.QUrl(DOWNLOAD_URL)))
-        layout.addWidget(download);self.buttons.append(download)
-        self.factory_voice=W.QCheckBox('同时恢复无障碍语音包，并解除语音指南置灰')
-        self.factory_voice.setChecked(True);layout.addWidget(self.factory_voice)
-        voice_note=W.QLabel('勾选时补回语音文件并解除置灰；不勾选则不补回已删除的语音，已禁用的语音指南保持关闭、置灰。')
-        voice_note.setWordWrap(True);layout.addWidget(voice_note)
-        self.factory_button=W.QPushButton('开始一键恢复')
+        self.factory_button=W.QPushButton('通过 USB 将版本设为 2.00')
         self.factory_button.setObjectName('factoryPrimaryAction');self.factory_button.setProperty('primary',True)
         self.factory_button.clicked.connect(self.factory_action)
         layout.addWidget(self.factory_button);self.buttons.append(self.factory_button)
-        self.factory_status=W.QLabel('点击开始；写入后按提示重启，再点同一个按钮继续完成恢复。')
+        self.factory_status=W.QLabel()
         self.factory_status.setWordWrap(True);layout.addWidget(self.factory_status)
-        resume_section = self.advanced(layout, '上次恢复记录（可选）')
-        resume_form = W.QFormLayout()
-        self.field(resume_form, 'factory_failed_work', '恢复任务目录', kind='folder',value=self.settings.get('factory_direct_work', ''))
-        resume_section.addLayout(resume_form)
-        self.factory_wait_controls=W.QWidget()
-        wait_layout=W.QVBoxLayout(self.factory_wait_controls);wait_layout.setContentsMargins(0,0,0,0)
-        self.factory_accept = self.reload_controls(wait_layout, '取景、拍照和回放正常')
-        layout.addWidget(self.factory_wait_controls)
-        layout.addWidget(W.QLabel('相机仍需能够进入 USB 服务通信；此操作不是索尼更新器的降级重刷。'))
-        backup = self.advanced(layout, '备份当前项目状态（可选）')
-        backup_form=W.QFormLayout()
-        self.field(backup_form,'backup_folder','保存位置',kind='folder',value=str(data_root()/'backups'))
-        self.backup_voice=W.QCheckBox('同时备份语音指南音频（约 287 MiB，耗时较长）')
-        backup_form.addRow('',self.backup_voice);backup.addLayout(backup_form)
-        self.button(backup,'备份当前程序、外观、设置和名称（只读）','backup_current',
-            lambda:dict(self.common(),workspace=str(Path(self.text('backup_folder'))/
-                ('backup-'+datetime.now().strftime('%Y%m%d-%H%M%S')+'-'+uuid.uuid4().hex[:6])),
-                include_voice=self.backup_voice.isChecked()))
-        backup_note=W.QLabel('保存创建时的当前项目状态，可能已修改；不是原厂基准或完整相机镜像。'
-            '项目检查点可用下方“使用旧备份”入口恢复；语音包另存，不包含在当前项目还原范围内。'
-            '安装和一键恢复无需先备份。')
-        backup_note.setWordWrap(True);backup.addWidget(backup_note)
-        legacy = self.advanced(layout, '使用旧备份回到过去的状态（可选）')
-        self.backup_recovery_controls(legacy)
-        layout.addStretch()
 
     def factory_state(self):
-        work=self.text('factory_failed_work') or self.settings.get('factory_direct_work','')
-        path=Path(work,'direct.private.json') if work else None
+        work=self.settings.get('factory_usb_version_work','')
+        path=Path(work,'version-restore.private.json') if work else None
         try:state=json.loads(path.read_text(encoding='utf-8')) if path and path.is_file() else {}
         except (OSError,ValueError):state={}
         return state if isinstance(state,dict) else {}
 
     def factory_action(self):
-        state=self.factory_state()
-        waiting=state.get('phase') in ('AWAITING_RELOAD','LOADED','COMPLETE') and not (
-            state.get('readonly_after_reload_verified') and state.get('private_sound_files_removed'))
-        if waiting:
-            args=self.direct_verify_args('factory',self.factory_accept.isChecked())
-            args.update(sony_firmware=self.text('factory_voice_firmware') or None,
-                backup=self.text('factory_original_backup') or None)
-            self.launch('direct_verify',args)
-        else:
-            from .official import local_recovery_source
-            if not (self.text('factory_voice_firmware') or self.text('factory_original_backup') or local_recovery_source()):
-                W.QMessageBox.information(self,'请选择恢复来源','请先选择官方 ILCE-7CM2 2.01 BODYDATA.DAT，或可用的同机原始备份；程序、设置及所选语音均从该来源取得。')
-                return
-            self.launch('direct_factory_reset',self.direct_args('factory',
-                sony_firmware=self.text('factory_voice_firmware') or None,
-                backup=self.text('factory_original_backup') or None,restore_voice=self.factory_voice.isChecked()))
+        self.launch('usb_restore_version',dict(self.common(),workspace=self.work('card-recovery-version')))
 
     def refresh_factory_controls(self):
-        state=self.factory_state();phase=state.get('phase')
-        waiting=phase in ('AWAITING_RELOAD','LOADED','COMPLETE') and not (
-            state.get('readonly_after_reload_verified') and state.get('private_sound_files_removed'))
-        self.factory_button.setText('继续完成一键恢复' if waiting else '开始一键恢复')
-        self.factory_wait_controls.setVisible(waiting)
-        self.factory_voice.setEnabled(not waiting)
-        if waiting:
-            self.factory_voice.setChecked(state.get('restore_voice',True))
-            self.factory_status.setText('恢复尚未完成：写入已结束。请按提示重启、接回 USB，然后点击上面的“继续完成一键恢复”；不会重复刷写程序。')
-        elif phase in ('LOADED','COMPLETE'):
-            self.factory_status.setText('上次恢复已完成'+('，按本次选择保留语音禁用及置灰。' if state.get('restore_voice') is False else '。')+
-                '机身取景、拍照与回放仍请实际检查。')
-        elif phase=='NEEDS_REVIEW':
-            self.factory_status.setText('上次操作未完成或尚未开始，日志已保留。选择恢复来源后，点击“开始一键恢复”。')
-        else:self.factory_status.setText('点击开始；写入后按提示重启，再点同一个按钮继续完成恢复。')
+        state=self.factory_state()
+        if state.get('phase')=='AWAITING_CARD_UPDATE':
+            message='上次版本资料 2.00 已读回，USB 读写已结束；机身程序尚未恢复。请继续手动卡刷。'
+        elif state.get('phase')=='NEEDS_REVIEW_NO_AUTOMATIC_REPLAY':
+            message='上次版本准备停止，记录已保留；请先检查日志，不要重复未知写入。'
+        else:
+            message='完成版本准备后，按提示断电重开，再手动卡刷恢复包。'
+        self.factory_status.setText(message)
 
-    def backup_recovery_controls(self, layout):
-        form = self.box(layout, '恢复来源')
-        self.field(form, 'restore_backup', '备份目录', kind='folder')
-        choose_zip = W.QPushButton('或选择完整备份 ZIP…')
-        choose_zip.clicked.connect(lambda: self.browse(self.fields['restore_backup'], 'file', 'Backup (*.zip);;All files (*)'))
-        form.addRow('', choose_zip)
-        self.field(form, 'restore_work', '恢复任务目录', kind='folder', value=self.work('recovery'))
-        self.button(layout, '检查所选备份（离线）', 'backup_inspect', lambda: {'backup': self.text('restore_backup')})
-        auto = W.QPushButton('一键还原：查找并使用最初完整备份')
-        auto.setObjectName('one_click_restore')
-        auto.clicked.connect(self.one_click_restore)
-        self.buttons.append(auto)
-        layout.addWidget(auto)
-        self.button(layout, '恢复所选备份并完整读回', 'restore', lambda: dict(self.common(),
-            backup=self.text('restore_backup'), workspace=self.text('restore_work'),
-            sony_firmware=self.text('factory_voice_firmware') or None), primary=True)
-        self.recovery_accept = self.reload_controls(layout, '恢复后取景、拍照和回放正常')
-        self.button(layout, '核对旧备份恢复后的加载状态', 'restore_verify', lambda: {
-            'workspace': self.text('restore_work'), 'accepted': self.recovery_accept.isChecked()})
-        note = W.QLabel('相机需要仍可进入服务通信。此入口使用机身备份；不把官方 BODYDATA.DAT 当作备份刷入。')
-        note.setWordWrap(True)
-        layout.addWidget(note)
-
-    def fl23_page(self):
-        layout = self.page('FL2 / FL3', '直接启用／移除，不要求创建备份。移除只关闭 FL2／FL3 的列表入口，保留自定义外观所需的共用色彩代码；之后可以重新启用。')
-        self.button(layout, '启用／重新启用 FL2 / FL3', 'direct_fl23_enable',
-                    lambda: self.direct_args('fl23', mode='fl23_enable'), primary=True)
-        self.button(layout, '从列表移除 FL2 / FL3，保留自定义外观', 'direct_fl23_disable',
-                    lambda: self.direct_args('fl23', mode='fl23_disable'))
-        info = W.QLabel('写入读回后按弹窗断电重开，在相机确认即可使用；无需再接电脑核对。')
-        info.setWordWrap(True); layout.addWidget(info)
-        diagnostic = self.advanced(layout, '加载核对（可选诊断，不是使用前提）')
-        self.fl23_accept = self.reload_controls(diagnostic, '菜单、拍照和回放正常')
-        self.button(diagnostic, '只读核对已加载的版本（可选）', 'direct_verify',
-                    lambda: self.direct_verify_args('fl23', self.fl23_accept.isChecked()))
-        if '--preview-gate-test' in sys.argv:
-            preview = layout
-            preview.addWidget(W.QLabel('取景器横线＋实时预览：第 3 版候选（等待实机验收）'))
-            hint = W.QLabel('第 1 版横线消失，但切槽预览可能停在上一个外观。第 3 版补传未提交的色表，'
-                           '并修正第 2 版的重复上传问题。应用后按弹窗断电重开，再检查横线和六槽切换。')
-            hint.setWordWrap(True); preview.addWidget(hint)
-            self.button(preview, '应用横线＋实时预览修复候选（第 3 版）', 'direct_preview_pending',
-                        lambda: self.direct_args('preview'), primary=True)
-            self.button(preview, '切回第 1 版：原生刷新（预览可能滞留）', 'direct_preview_native',
-                        lambda: self.direct_args('preview'))
-            self.button(preview, '撤回测试：恢复旧版刷新方式', 'direct_preview_legacy',
-                        lambda: self.direct_args('preview'))
-            self.preview_accept = self.reload_controls(preview, '横线消失、六槽实时切换、拍摄和回放正常')
-            self.button(preview, '断电重开后只读核对本轮测试', 'direct_verify',
-                        lambda: self.direct_verify_args('preview', self.preview_accept.isChecked()))
-        layout.addStretch()
 
     def firmware_args(self):
         from looktool import bundle
@@ -804,18 +516,29 @@ class Window(W.QMainWindow):
                     custom_looks=self.local_looks.isChecked(),vertical=self.local_vertical.isChecked(),
                     precapture=False,voice_cleanup=True,
                     automatic_identity=True,
-                    looks=custom,
+                    looks=custom,custom_sound=self.firmware_sound_args(),
                     preset_pack=presets.PACK if self.local_looks.isChecked() and self.local_presets.isChecked() else None)
+
+    def firmware_sound_args(self):
+        if not(self.local_sound.isChecked()and self.local_custom_sound.isChecked()):return None
+        electronic=self.firmware_sound_electronic.isChecked()
+        mechanical=self.firmware_sound_mechanical.isChecked()
+        if not(electronic or mechanical):raise ValueError('请至少选择一种自定义快门声音的应用范围。')
+        return dict(source=self.text('firmware_sound_source'),start=self.firmware_sound_start.value(),
+                    duration=self.firmware_sound_duration.value(),
+                    selection='both'if electronic and mechanical else'electronic'if electronic else'mechanical')
 
     def firmware_page(self):
         layout=self.page('本地修改官方固件',
-            '选择功能，在电脑生成固件。签名材料由应用自动管理。')
+            '选择固件保存位置，可直接选 SD 卡根目录。生成后继续首次授信和刷前配置，再手动卡刷。')
         form=self.box(layout,'来源与输出')
         self.field(form,'firmware_source','官方 A7C II 2.01 BODYDATA.DAT',kind='file',filter='Sony firmware (*.DAT);;All files (*)')
-        self.field(form,'firmware_output','新的输出目录',value=self.work('local-firmware'),kind='directory')
-        self.field(form,'firmware_update_version','更新头版本',value='3.10')
+        self.field(form,'firmware_output','保存位置（可选 SD 卡）',value=self.work('local-firmware'),kind='directory')
+        self.field(form,'firmware_update_version','更新头版本',value='3.10').setText('3.10')
+        layout.setSizeConstraint(W.QLayout.SetMinimumSize)
         page_layout=layout
         layout=self.card(page_layout,'固件功能');layout.setSpacing(2)
+        layout.setSizeConstraint(W.QLayout.SetMinimumSize)
         self.local_fl23=W.QCheckBox('加入 FL2／FL3');self.local_fl23.setChecked(True)
         self.local_wb=W.QCheckBox('加入自动白平衡优化');self.local_wb.setChecked(True)
         self.local_sound=W.QCheckBox('加入快门音效与自定义声音支持');self.local_sound.setChecked(True)
@@ -867,97 +590,126 @@ class Window(W.QMainWindow):
         self.local_looks.toggled.connect(custom_changed)
         self.local_look_choices.idToggled.connect(lambda _index,_checked:refresh_looks())
         refresh_looks()
-        for item in (self.local_voice,self.local_fl23,self.local_wb,self.local_sound,
-                     self.local_vertical,self.local_ssh):layout.addWidget(item)
+        for item in (self.local_voice,self.local_fl23,self.local_wb,self.local_sound):layout.addWidget(item)
+        sound_layout=layout
+        self.local_sound_panel=W.QFrame();self.local_sound_panel.setProperty('subpanel',True)
+        sounds=W.QVBoxLayout(self.local_sound_panel);sounds.setContentsMargins(16,12,16,14);sounds.setSpacing(10)
+        sounds.setSizeConstraint(W.QLayout.SetMinimumSize)
+        choices=W.QHBoxLayout();choices.setSpacing(22)
+        self.local_default_sound=W.QRadioButton('使用默认声音')
+        self.local_custom_sound=W.QRadioButton('自定义声音')
+        self.local_sound_choices=W.QButtonGroup(self.local_sound_panel)
+        for index,button in enumerate((self.local_default_sound,self.local_custom_sound)):
+            self.local_sound_choices.addButton(button,index);choices.addWidget(button)
+        self.local_default_sound.setChecked(True);choices.addStretch();sounds.addLayout(choices)
+        self.firmware_default_sound=W.QLabel('使用内置默认快门声音。')
+        self.firmware_default_sound.setProperty('note',True);sounds.addWidget(self.firmware_default_sound)
+        self.firmware_sound_panel=W.QWidget();sound_form=W.QFormLayout(self.firmware_sound_panel)
+        sound_form.setContentsMargins(0,0,0,0);sound_form.setHorizontalSpacing(18);sound_form.setVerticalSpacing(10)
+        sound_form.setFieldGrowthPolicy(W.QFormLayout.AllNonFixedFieldsGrow)
+        sound_form.setSizeConstraint(W.QLayout.SetMinimumSize)
+        self.field(sound_form,'firmware_sound_source','声音文件',kind='file',
+            filter='Audio / video (*.wav *.mp3 *.mp4 *.m4a *.flac *.ogg);;All files (*)')
+        sound_form.itemAt(0,W.QFormLayout.FieldRole).layout().setSpacing(10)
+        self.firmware_sound_start=W.QDoubleSpinBox();self.firmware_sound_start.setRange(0,86400)
+        self.firmware_sound_start.setDecimals(3)
+        self.firmware_sound_duration=W.QDoubleSpinBox();self.firmware_sound_duration.setRange(.01,2)
+        self.firmware_sound_duration.setDecimals(3);self.firmware_sound_duration.setValue(.08)
+        timing=W.QHBoxLayout();timing.setSpacing(10);timing.addWidget(W.QLabel('起点'))
+        timing.addWidget(self.firmware_sound_start);timing.addSpacing(14);timing.addWidget(W.QLabel('长度'))
+        timing.addWidget(self.firmware_sound_duration);timing.addStretch()
+        sound_form.addRow('片段（秒）',timing)
+        targets=W.QHBoxLayout();targets.setSpacing(24)
+        self.firmware_sound_electronic=W.QCheckBox('电子快门');self.firmware_sound_electronic.setChecked(True)
+        self.firmware_sound_mechanical=W.QCheckBox('机械快门')
+        targets.addWidget(self.firmware_sound_electronic);targets.addWidget(self.firmware_sound_mechanical);targets.addStretch()
+        sound_form.addRow('应用范围',targets)
+        sound_note=W.QLabel('生成时自动转换所选片段，随固件一起写入。');sound_note.setWordWrap(True)
+        sound_form.addRow(sound_note)
+        sounds.addWidget(self.firmware_sound_panel)
+        panel_row=W.QHBoxLayout();panel_row.setContentsMargins(48,4,0,8);panel_row.addWidget(self.local_sound_panel)
+        sound_layout.addLayout(panel_row)
+        def refresh_sound():
+            enabled=self.local_sound.isChecked()
+            self.local_sound_panel.setVisible(enabled)
+            self.firmware_default_sound.setVisible(enabled and self.local_default_sound.isChecked())
+            self.firmware_sound_panel.setVisible(enabled and self.local_custom_sound.isChecked())
+        self.local_sound.toggled.connect(refresh_sound)
+        self.local_sound_choices.idToggled.connect(lambda _index,_checked:refresh_sound());refresh_sound()
+        for item in (self.local_vertical,self.local_ssh):sound_layout.addWidget(item)
         layout=page_layout
-        note=W.QLabel('Wi-Fi 就绪后自动提供云创接口。首次机身授信与实际卡刷仍待验证。')
-        note.setWordWrap(True);layout.addWidget(note)
+        self.firmware_config_notice=W.QLabel(reloadguide.PREFLASH_SETTINGS+
+            '已授信的机身只需写配置；卡刷包沿用原厂设置迁移，不在更新末尾执行额外配置脚本。'
+            '竖屏显示通过刷前配置启用，不增加机内开关菜单。')
+        self.firmware_config_notice.setWordWrap(True);layout.addWidget(self.firmware_config_notice)
         layout.addSpacing(6)
         self.button(layout,'生成本地固件候选（不访问相机）','firmware_build',self.firmware_args,primary=True)
         layout.addStretch()
 
     def trust_page(self):
-        layout=self.page('首次授信','通过 USB 安装本应用公钥与验签策略，然后在电脑生成固件、手动卡刷。签名私钥留在电脑。')
-        note=W.QLabel('安装前读取并保存本机原始更新器；仅修改公钥与四个验签库所在范围，逐批及整分区读回。'
-            '当前已通过离线与虚拟机测试，实机授信及完整卡刷尚未验收。')
+        layout=self.page('首次授信','先准备固件和 SD 卡，最后通过 USB 写入配置，随后直接手动卡刷。已授信的机身无需重复安装公钥，可以只写配置。')
+        note=W.QLabel('第一次使用时安装机身公钥，软件会自动保留原始备份。已授信的相机可以直接写入刷前配置。')
         note.setWordWrap(True);layout.addWidget(note)
         self.trust_install_button=self.button(layout,'通过 USB 安装机身公钥','firmware_trust_install',
             lambda:dict(workspace=self.work('trust-install')),primary=True)
-        form=self.box(layout,'安装记录与恢复')
-        self.field(form,'trust_record','首次安装备份记录',value=self.settings.get('trust_install_work',''),kind='directory')
-        self.trust_verify_button=self.button(layout,'断电重开后，通过 USB 核对','firmware_trust_verify',
-            lambda:dict(workspace=self.work('trust-verify'),source_workspace=self.trust_verify_source()))
-        self.trust_restore_button=self.button(layout,'通过 USB 恢复本机原厂授信','firmware_trust_restore',
-            lambda:dict(workspace=self.work('trust-restore'),source_workspace=self.text('trust_record')))
+        self.config_group=W.QGroupBox('刷前写入配置');config=W.QVBoxLayout(self.config_group)
+        self.config_fl23=W.QCheckBox('启用 FL2／FL3')
+        self.config_vertical=W.QCheckBox('启用竖屏显示（不增加机内开关菜单）')
+        self.config_voice=W.QCheckBox('关闭语音指南及快捷触发')
+        for widget in (self.config_fl23,self.config_vertical,self.config_voice):
+            widget.setChecked(True);config.addWidget(widget)
+            widget.toggled.connect(self.refresh_trust_controls)
+        self.config_voice.setEnabled(False)
+        for local,config_box in ((self.local_fl23,self.config_fl23),(self.local_vertical,self.config_vertical)):
+            local.toggled.connect(config_box.setChecked)
+            config_box.toggled.connect(local.setChecked)
+        config_note=W.QLabel('勾选项应与“生成固件”页一致；只写入并保存所选设置，不刷写程序。'
+            '支持在官方 2.01 或现有 3.10 上刷前准备。'+reloadguide.PREFLASH_SETTINGS)
+        config_note.setWordWrap(True);config.addWidget(config_note)
+        self.config_install_button=self.button(config,'通过 USB 写入所选功能配置','firmware_settings_install',
+            self.feature_settings_args,primary=True)
+        layout.addWidget(self.config_group)
         self.trust_state=W.QLabel();self.trust_state.setWordWrap(True);layout.addWidget(self.trust_state)
-        advanced=W.QGroupBox('开发工具 · 离线准备');advanced.setCheckable(True);advanced.setChecked(False);advanced.setProperty('optional',True)
-        self.trust_advanced=advanced
-        advanced_layout=W.QVBoxLayout(advanced);layout.addWidget(advanced)
-        content=W.QWidget();advanced_layout.addWidget(content);offline=W.QVBoxLayout(content)
-        content.setVisible(False);advanced.toggled.connect(content.setVisible)
-        form=self.box(offline,'仅用于已有解包文件')
-        self.field(form,'trust_source','本机更新器解包目录',kind='directory')
-        self.fields['trust_source'].setPlaceholderText('选择包含 usr/lib 下四个更新器库的解包根目录')
-        self.field(form,'trust_output','新的输出目录',value=self.work('first-trust'),kind='directory')
-        self.trust_prepare_button=self.button(offline,'在电脑准备公钥与策略文件','firmware_trust_prepare',
-            lambda:dict(updater_root=self.text('trust_source'),workspace=self.text('trust_output')))
-        self.trust_hint=W.QLabel();self.trust_hint.setWordWrap(True);offline.addWidget(self.trust_hint)
-        for key in ('trust_source','trust_output','trust_record'):self.fields[key].textChanged.connect(self.refresh_trust_controls)
         self.refresh_trust_controls();layout.addStretch()
 
     def trust_verify_source(self):
-        original=self.text('trust_record')
-        return self.settings.get('trust_latest_work',original) if original==self.settings.get('trust_install_work') else original
+        return self.settings.get('trust_latest_work')or self.settings.get('trust_install_work','')
+
+    def feature_settings_args(self):
+        return dict(workspace=self.work('preflash-settings'),fl23=self.config_fl23.isChecked(),
+            vertical=self.config_vertical.isChecked(),voice_cleanup=self.config_voice.isChecked())
 
     def refresh_trust_controls(self):
-        from .firmwaretrust import validate
-        try:
-            validate(dict(updater_root=self.text('trust_source'),workspace=self.text('trust_output')))
-            hint='文件来源已找到。此按钮仅在电脑生成离线文件，不写入相机，也不表示机身授信完成。'
-            ready=True
-        except (ValueError,OSError) as exc:
-            hint=str(exc);ready=False
-        self.trust_hint.setText(hint)
-        self.trust_prepare_button.setEnabled(ready and self.process is None)
-        origin=Path(self.text('trust_record'))
+        original=self.settings.get('trust_install_work','');origin=Path(original)
         try:
             from .trustinstall import STATE
-            state=json.loads((origin/STATE).read_text(encoding='utf-8')) if self.text('trust_record') else {}
+            state=json.loads((origin/STATE).read_text(encoding='utf-8')) if original else {}
             restorable=state.get('mode')=='trust_install' and state.get('backup_verified',False)
             latest=json.loads((Path(self.trust_verify_source())/STATE).read_text(encoding='utf-8')) if self.trust_verify_source() else {}
         except (OSError,ValueError):state={};latest={};restorable=False
         idle=self.process is None
+        self.config_install_button.setEnabled(idle and any(widget.isChecked() for widget in
+            (self.config_fl23,self.config_vertical,self.config_voice)))
         restored=latest.get('mode')=='trust_restore' and latest.get('phase')=='LOADED'
         self.trust_install_button.setEnabled(idle and not (restorable and state.get('write_attempted') and not restored))
-        self.trust_restore_button.setEnabled(idle and restorable)
-        self.trust_verify_button.setEnabled(idle and latest.get('phase')=='AWAITING_RELOAD')
-        self.trust_state.setText('记录状态：'+latest.get('phase',state.get('phase','尚无安装记录'))+
-            '。分区读回及重开核对不等于完整卡刷验收。')
+        phase=latest.get('phase',state.get('phase'))
+        self.trust_state.setText('上次授信尚未确认完成，请查看日志，不要重复安装。' if phase=='NEEDS_REVIEW' else
+            '上次操作是恢复原厂授信，安装本工具生成的固件前需要重新授信。' if restored else
+            '已保留授信记录；已授信的相机无需重复安装公钥。' if restorable else '')
+        if hasattr(self,'install_guide'):self.install_guide.refresh()
 
-    def whitebalance_page(self):
-        layout = self.page('自动白平衡优先级（实验）',
-            '参考 R5 的白色优先 97／气氛优先 −1，适配 A7C II 2.01 的原生修正链。标准 AWB 不变；机内仍可选择三种优先级。')
-        note = W.QLabel('已通过原厂指令离线对照，尚未验证实拍效果。此开关独立于创意外观，不会随一键安装自动开启。'
-            '保留机身校准、手动色温和白平衡微调；关闭后重新使用本机原有优先级参数。')
-        note.setWordWrap(True); layout.addWidget(note)
-        self.button(layout, '启用白平衡优先级实验', 'direct_wb_enable',
-                    lambda: self.direct_args('wb'), primary=True)
-        self.button(layout, '关闭实验，恢复原生白平衡优先级', 'direct_wb_disable',
-                    lambda: self.direct_args('wb'))
-        self.wb_accept = self.reload_controls(layout, '已检查白平衡、取景、拍摄和回放')
-        self.button(layout, '重开后核对本次白平衡更改', 'direct_verify',
-                    lambda: self.direct_verify_args('wb', self.wb_accept.isChecked()))
-        layout.addStretch()
 
     def ssh_update_args(self,**values):
-        baseline=self.text('ssh_update_baseline')
+        baseline=self.settings.get('ssh_update_baseline','')
         public=Path(baseline).parent/'ssh/host-public.json' if baseline else None
-        return dict(self.common(),workspace=self.text('ssh_update_work'),baseline=self.text('ssh_update_baseline'),
+        args=dict(self.common(),workspace=self.work('ssh-update'),
                     host_public=str(public) if public and public.is_file() else None,bind_ip=self.text('ssh_update_ip'),
-                    client_private=None,previous_look_update=self.settings.get('look_ssh_work'),**values)
+                    client_private=None,previous_look_update=self.settings.get('look_ssh_work'))
+        args.update(values)
+        return args
 
-    def ssh_updates_page(self):
-        layout=self.page('连接设置','滤镜、快门音效和一键恢复共用这里的连接信息，在各自页面选择 SSH 或 USB。')
+
+    def connection_settings_controls(self,layout):
         form=self.box(layout,'SSH · Wi-Fi 连接')
         self.field(form,'ssh_update_ip','相机 Wi-Fi IPv4')
         form.addRow('登录信息',W.QLabel('root / A7C2Tools · 端口 2222（自动登录）'))
@@ -968,52 +720,17 @@ class Window(W.QMainWindow):
         usb.addRow(W.QLabel('相机开机，USB 连接模式选择“海量存储”。'))
         row=W.QHBoxLayout();usb.addRow(row)
         self.button(row,'检测相机与驱动','driver_scan')
-        driver=W.QPushButton('USB 驱动安装与连接工具…')
-        driver.clicked.connect(lambda:self.select_page(1));row.addWidget(driver);self.buttons.append(driver)
-        advanced=self.advanced(layout,'滤镜构建记录')
-        form=self.box(advanced,'SSH 批量滤镜更新')
-        self.field(form,'ssh_update_baseline','本地固件的 baseline 目录',kind='directory')
-        self.field(form,'ssh_update_work','本次更新目录',value=self.work('ssh-update'),kind='directory')
-        layout.addStretch()
+        driver=W.QPushButton('USB 连接工具…' if sys.platform=='darwin' else 'USB 驱动安装与连接工具…')
+        driver.clicked.connect(lambda:self.select_page('drivers'));row.addWidget(driver);self.buttons.append(driver)
 
     def transport_controls(self,layout,key):
         row=W.QHBoxLayout();row.addWidget(W.QLabel('连接方式'))
         choice=TransportChoice(key)
         row.addWidget(choice);row.addStretch()
-        settings=W.QPushButton('连接设置…');settings.clicked.connect(lambda:self.select_page(10))
+        settings=W.QPushButton('连接设置…');settings.clicked.connect(lambda:self.select_page('advanced'))
         row.addWidget(settings);self.buttons.append(settings);layout.addLayout(row)
         return choice
 
-    def ssh_args(self):
-        return dict(self.common(), workspace=self.text('ssh_work'),
-                    client_key=self.text('ssh_public_key'), client_private=self.text('ssh_private_key'),
-                    bind_ip=self.text('ssh_ip'), artifacts=self.text('ssh_artifacts'),
-                    listen_all=self.ssh_listen_all.isChecked())
-
-    def ssh_page(self):
-        layout = self.page('临时 SSH 开发调试',
-            '通过 USB 启动独立 Dropbear，Wi-Fi 登录端口 2222。只在内存运行，不修改原厂 SSH、系统账号或开机配置。')
-        form = self.box(layout, '会话与电脑端密钥')
-        self.field(form, 'ssh_work', '会话目录', value=self.work('ssh'), kind='directory')
-        self.field(form, 'ssh_ip', '相机 Wi-Fi IPv4')
-        self.field(form, 'ssh_public_key', '电脑端 Ed25519 公钥', kind='file', filter='SSH public key (*.pub);;All files (*)')
-        self.field(form, 'ssh_private_key', '电脑端配对私钥（仅登录核对）', kind='file')
-        self.field(form, 'ssh_artifacts', 'Dropbear 资源目录', value=str(ROOT / 'desktop-assets/ssh'), kind='directory')
-        self.ssh_listen_all = W.QCheckBox('监听全部相机接口（USB 退出后再连接 Wi-Fi 时使用）')
-        layout.addWidget(self.ssh_listen_all)
-        note = W.QLabel('先连接相机 Wi-Fi 并记下 IP，在电脑生成或选择 Ed25519 密钥。公钥会用于相机登录，私钥只留在电脑。'
-            '离线准备 → 接回 USB 并启动 → 拔 USB、保持相机开机和 Wi-Fi 连接 → 核对 SSH 登录。'
-            '查询和停止使用 USB；断电后临时服务失效。实机 Wi-Fi／休眠待验收，当前不提供持久启动。')
-        note.setWordWrap(True); layout.addWidget(note)
-        fresh = W.QPushButton('使用新的会话目录')
-        fresh.clicked.connect(lambda: self.fields['ssh_work'].setText(self.work('ssh')))
-        layout.addWidget(fresh); self.buttons.append(fresh)
-        self.button(layout, '离线准备临时 SSH', 'ssh_prepare', self.ssh_args)
-        self.button(layout, '通过 USB 启动临时 SSH', 'ssh_start', self.ssh_args, primary=True)
-        self.button(layout, '通过 USB 查询当前会话', 'ssh_status', self.ssh_args)
-        self.button(layout, '通过 Wi-Fi 核对 SSH 登录', 'ssh_verify_login', self.ssh_args)
-        self.button(layout, '通过 USB 停止临时 SSH', 'ssh_stop', self.ssh_args)
-        layout.addStretch()
 
     def look_page(self):
         from .lookeditor import LookEditor
@@ -1025,7 +742,8 @@ class Window(W.QMainWindow):
         self.look_button.setObjectName('action_direct_looks_import');self.look_button.clicked.connect(self.launch_look_changes)
         layout.addWidget(self.look_button);self.buttons.append(self.look_button)
         tools=W.QHBoxLayout();layout.addLayout(tools)
-        for title,callback in [('打开内置 DCP／A7Look 配对库',self.open_profile_library),('从 DCP／LUT 生成 A7Look＋DCP…',self.compiler_dialog),('安装 LrC 自动识别插件…',self.plugin_dialog)]:
+        library_title='打开内置六款 A7Look' if sys.platform=='win32' else '打开内置 DCP／A7Look 配对库'
+        for title,callback in [(library_title,self.open_profile_library),('从 DCP／LUT 生成 A7Look＋DCP…',self.compiler_dialog),('安装 LrC 自动识别插件…',self.plugin_dialog)]:
             button=W.QPushButton(title);button.clicked.connect(callback);tools.addWidget(button);self.buttons.append(button)
         formats=W.QPushButton('LUT 格式说明：ST / sRGB，不是 S-Log3…')
         formats.clicked.connect(self.show_look_format_guide);layout.addWidget(formats);self.buttons.append(formats)
@@ -1043,7 +761,7 @@ class Window(W.QMainWindow):
         from .profilelibrary import location
         folder=location()
         if not (folder/'catalog.json').is_file():
-            W.QMessageBox.warning(self,'配对库缺失','没有找到内置 DCP／A7Look 配对库，请保留完整测试包目录。\n查找位置：'+str(folder));return
+            W.QMessageBox.warning(self,'外观库缺失','没有找到内置外观库，请保留完整工具包目录。\n查找位置：'+str(folder));return
         if not QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(str(folder))):
             W.QMessageBox.warning(self,'无法打开配对库','系统未能打开配对库文件夹。位置：\n'+str(folder))
 
@@ -1060,6 +778,7 @@ class Window(W.QMainWindow):
                     prior=status['result']['workspace']
                 elif matches and status.get('phase') in ('RUNNING','QUEUED') and self.process is None:
                     return prior,dict(phase='BACKGROUND_UNCONFIRMED',error='后台任务尚未确认结束，请等待原结果或查看日志，不重复写入。')
+            if Path(prior,'command.private.json').is_file():return None
             if not Path(prior,'direct.private.json').is_file():
                 prior=self.settings.get('look_resume_source')
                 if not prior or not Path(prior,'direct.private.json').is_file():return None
@@ -1079,7 +798,7 @@ class Window(W.QMainWindow):
             if pending:self.look_transport.select('usb')
             ssh=self.look_transport.value()=='ssh'
             self.look_verify_button.setVisible(ssh)
-            self.look_help.setText('先在连接设置中选择这台相机的固件构建记录。应用后按提示断电重开，再核对本次更新。' if ssh else
+            self.look_help.setText('连接相机热点后直接应用；能力和状态自动读取，不需要旧构建记录。完成后按提示断电加载。' if ssh else
                 '同一次操作自动检查当前状态、写入并完整读回。结束后按弹窗断电加载，无需单独点击核对。')
             if not pending and self.look_transport.value()=='ssh':
                 rows=self.look_editor.values();busy=self.process is not None
@@ -1140,35 +859,19 @@ class Window(W.QMainWindow):
             QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(prior));return
         self.launch('direct_looks_import',self.look_batch_args())
 
-    def vertical_page(self):
-        layout = self.page('竖屏显示', '竖握相机时，拍摄信息、图标和布局跟随转向。开启会保存原生开关，断电重开后自动生效；不是整个 MENU 转向。')
-        form = self.box(layout, '显示任务')
-        self.field(form, 'vertical_work', '任务目录', kind='folder', value=str(data_root() / 'vertical'))
-        args = lambda: dict(self.common(), workspace=self.text('vertical_work'))
-        self.button(layout, '开启竖屏显示', 'vertical_enable', args, primary=True)
-        self.button(layout, '关闭竖屏显示', 'vertical_disable', args)
-        frame_hint=W.QLabel('采用与 M4 相同的原生资源分流：横／竖屏各自读取独立资源，保留原图像 ID 和原生刻度绘制。'
-            '从旧版升级时先撤回补偿并按提示重开，再点开启继续；新竖屏资源完整复制与读回后才保存开启。'
-            '资源约占 28 MiB，空间不足会停止；可在恢复页选择清理语音，工具不会自动删除。')
-        frame_hint.setWordWrap(True);layout.addWidget(frame_hint)
-        known=W.QLabel('当前为原生竖屏路径候选，尚未真机验收。重开后请检查横握／两侧竖握的 Fn、外框、橙色指针、触摸／按键方向及拍摄回放。')
-        known.setWordWrap(True);layout.addWidget(known)
-        hint = W.QLabel('开启／关闭会一次完成所选写入和读回，再统一弹窗提示断电加载。相同状态可重复点击，相同内容不重复写入。')
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
-        layout.addStretch()
 
     def sound_page(self):
-        layout = self.page('快门音效', '在电脑导入、生成、试听和调整音量，再通过 SSH 或 USB 应用到相机。')
+        layout = self.page('快门音效', '在电脑导入、试听和调整音量，再通过 SSH 或 USB 应用到相机。')
         self.sound_transport=self.transport_controls(layout,'sound')
         outer=layout;columns=W.QHBoxLayout();columns.setSpacing(14);outer.addLayout(columns)
         prepare=self.card(columns,'1 · 在电脑准备声音',stretch=1);apply=self.card(columns,'2 · 应用自定义声音',stretch=1)
-        for column in (prepare,apply):column.setProperty('fill',True)
+        for column in (prepare,apply):column.setProperty('fill',True);column.setSpacing(12)
         layout=prepare
         args = lambda: dict(self.common(), workspace=self.text('sound_work'), backup=self.text('sound_backup'))
         media = W.QFormLayout();media.setHorizontalSpacing(14);media.setVerticalSpacing(10)
         media.setFieldGrowthPolicy(W.QFormLayout.AllNonFixedFieldsGrow);layout.addLayout(media)
         self.field(media, 'sound_source', '声音文件', kind='file', filter='Audio / video (*.wav *.mp3 *.mp4 *.m4a *.flac *.ogg);;All files (*)')
+        media.itemAt(0,W.QFormLayout.FieldRole).layout().setSpacing(10)
         self.sound_start = W.QDoubleSpinBox()
         self.sound_start.setRange(0, 86400)
         self.sound_start.setDecimals(3)
@@ -1176,32 +879,27 @@ class Window(W.QMainWindow):
         self.sound_duration.setRange(.01, 2)
         self.sound_duration.setDecimals(3)
         self.sound_duration.setValue(.08)
-        timing=W.QHBoxLayout();timing.setSpacing(8);timing.addWidget(W.QLabel('起点'));timing.addWidget(self.sound_start)
-        timing.addWidget(W.QLabel('长度'));timing.addWidget(self.sound_duration)
+        timing=W.QHBoxLayout();timing.setSpacing(10);timing.addWidget(W.QLabel('起点'));timing.addWidget(self.sound_start)
+        timing.addSpacing(14);timing.addWidget(W.QLabel('长度'));timing.addWidget(self.sound_duration)
         media.addRow('片段（秒）',timing)
-        row = W.QHBoxLayout()
+        row = W.QHBoxLayout();row.setSpacing(12)
         layout.addLayout(row)
         self.button(row, '导入并转换所选片段', 'sound_import', lambda: dict(args(), source=self.text('sound_source'),
             start=self.sound_start.value(), duration=self.sound_duration.value(), peak=.4))
-        row=W.QHBoxLayout();layout.addLayout(row)
-        self.sound_preset=W.QComboBox()
-        self.sound_preset.addItem('清脆短音',880);self.sound_preset.addItem('柔和短音',660)
-        row.addWidget(self.sound_preset)
-        self.button(row,'生成示例音效','sound_generate',lambda:dict(args(),frequency=self.sound_preset.currentData(),duration=self.sound_duration.value()))
-        volume = W.QHBoxLayout()
+        volume = W.QHBoxLayout();volume.setSpacing(12)
         layout.addLayout(volume)
         self.button(volume, '音量降低 −3 dB', 'sound_volume', lambda: dict(args(), decibels=-3))
         self.button(volume, '音量提高 +3 dB', 'sound_volume', lambda: dict(args(), decibels=3))
         self.button(layout, '还原转换时音量', 'sound_volume', lambda: dict(args(), reset=True))
-        preview=W.QHBoxLayout();layout.addLayout(preview)
+        preview=W.QHBoxLayout();preview.setSpacing(12);layout.addLayout(preview)
         play=W.QPushButton('在电脑试听');play.clicked.connect(self.preview_sound)
         preview.addWidget(play);self.buttons.append(play)
         stop=W.QPushButton('停止试听');stop.clicked.connect(self.stop_sound_preview)
         preview.addWidget(stop);self.buttons.append(stop)
-        self.sound_preview_status=W.QLabel('导入或生成后可试听；音量调整只在电脑完成。')
+        self.sound_preview_status=W.QLabel('导入后可试听；音量调整只在电脑完成。')
         self.sound_preview_status.setWordWrap(True);layout.addWidget(self.sound_preview_status)
         prepare.addStretch();layout=apply
-        targets=W.QVBoxLayout();targets.setSpacing(0)
+        targets=W.QVBoxLayout();targets.setSpacing(8)
         self.sound_electronic=W.QCheckBox('应用于电子快门声音');self.sound_electronic.setChecked(True)
         self.sound_mechanical=W.QCheckBox('应用于机械快门声音')
         targets.addWidget(self.sound_electronic);targets.addWidget(self.sound_mechanical);layout.addLayout(targets)
@@ -1214,7 +912,7 @@ class Window(W.QMainWindow):
         switches=W.QFormLayout();switches.setHorizontalSpacing(14);switches.setVerticalSpacing(8)
         switches.setFieldGrowthPolicy(W.QFormLayout.AllNonFixedFieldsGrow);layout.addLayout(switches)
         for selection,label in (('electronic','电子'),('mechanical','机械')):
-            row=W.QHBoxLayout();row.setSpacing(8)
+            row=W.QHBoxLayout();row.setSpacing(12)
             for enabled,title in ((True,'开启'),(False,'关闭')):
                 button=W.QPushButton(title)
                 button.setObjectName('switch_'+selection+'_'+('on' if enabled else 'off'))
@@ -1224,18 +922,15 @@ class Window(W.QMainWindow):
             switches.addRow(label+'快门',row)
         note=W.QLabel('机械快门的开关仅控制扬声器音效，机械结构本身仍会发声。')
         note.setWordWrap(True);layout.addWidget(note)
-        check=W.QPushButton('重开后查询／核对音效');check.clicked.connect(self.verify_sound)
-        layout.addWidget(check);self.buttons.append(check)
         apply.addStretch();layout=outer
-        optional=self.advanced(layout,'工作目录与 USB 高级工具')
-        form=self.box(optional,'电脑声音工作区')
-        self.field(form,'sound_work','工作目录',kind='folder',value=str(data_root()/'sound'))
-        self.field(form,'sound_backup','第二份备份',kind='folder',value=str(data_root()/'sound-backup'))
+        optional=self.advanced(layout,'USB 高级工具')
+        optional.parentWidget().setObjectName('soundUsbTools')
+        # Keep existing workspace paths internally; no manual record controls.
+        for key,default in (('sound_work',data_root()/'sound'),('sound_backup',data_root()/'sound-backup')):
+            field=W.QLineEdit(str(self.settings.get(key,default)),self)
+            field.setObjectName(key);field.hide();self.fields[key]=field
         self.button(optional,'USB · 相机内临时试听','sound_audition',args)
-        self.button(optional, '确认试听正确', 'sound_confirm', lambda: dict(args(), result='correct'))
-        self.button(optional, '已断电恢复原声，记录恢复完成', 'sound_confirm_recovery', args)
-        self.sound_accept = self.reload_controls(optional, '声音正确、拍摄和回放正常')
-        self.button(optional, 'USB · 移除全部自定义音效，关闭电子快门音效', 'sound_restore_sound', args)
+        self.button(optional, 'USB · 恢复原厂快门声音', 'sound_restore_sound', args)
         layout.addStretch()
 
     def sound_selection(self):
@@ -1261,9 +956,6 @@ class Window(W.QMainWindow):
             action=('sound_mechanical_' if selection=='mechanical' else 'sound_')+('on' if enabled else 'off')
             self.launch(action,dict(self.common(),workspace=self.text('sound_work')))
 
-    def verify_sound(self):
-        if self.sound_transport.value()=='ssh':self.launch('ssh_sound_task',self.ssh_update_args())
-        else:self.launch('sound_verify',dict(self.common(),workspace=self.text('sound_work'),accepted=self.sound_accept.isChecked()))
 
     def stop_sound_preview(self):
         if hasattr(self,'sound_player'):self.sound_player.stop()
@@ -1281,9 +973,6 @@ class Window(W.QMainWindow):
         self.sound_player.stop();self.sound_player.setSource(QtCore.QUrl.fromLocalFile(str(path)))
         self.sound_player.play();self.sound_preview_status.setText('正在电脑播放当前声音。')
 
-    def show_shutter_notice(self):
-        from . import shutterguide
-        W.QMessageBox.information(self,shutterguide.TITLE,shutterguide.TEXT)
 
     def show_zadig_guide(self):
         from .zadigguide import TITLE, TEXT, URL
@@ -1308,9 +997,9 @@ class Window(W.QMainWindow):
     def compiler_dialog(self):
         dialog = W.QDialog(self)
         dialog.setWindowTitle('生成 A7Look ＋ DCP')
-        dialog.resize(760, 520)
+        dialog.resize(820, 760)
         layout = W.QVBoxLayout(dialog)
-        hint = W.QLabel('同时输出同名 A7Look 和 DCP。CUBE：输入必须是 Sony ST / sRGB，输出 sRGB；不能直接使用 S-Log3 / S-Gamut3.Cine 或其他 Log LUT。\nDCP：保留源颜色，配套拟合机内 A7Look；CUBE：制作配套 DCP 并拟合 A7Look。两种格式均为拟合／重建近似。本工具只生成文件，不写相机。')
+        hint = W.QLabel('同时输出同名 A7Look 和 DCP。CUBE 可选择输入曲线／色域与输出编码，支持常用 Log、宽色域及 PQ／HLG；DCP 保留原参考颜色。\n文件名识别仅为建议，请按 LUT 作者说明确认。M4 兼容项使用近似表；最终用于 SDR 照片外观，不会开启相机视频 Log。只生成文件，不写相机。')
         hint.setWordWrap(True)
         layout.addWidget(hint)
         help_button=W.QPushButton('支持哪些格式和色彩空间？查看完整说明…')
@@ -1318,6 +1007,26 @@ class Window(W.QMainWindow):
         form = self.box(layout, '源文件与输出')
         self.field(form, 'compile_source', 'DCP / CUBE', kind='file', filter='Reference (*.dcp *.cube)')
         self.field(form, 'compile_name', '外观名称')
+        from looktool import lutspaces
+        spaces=lutspaces.options()
+        input_space=W.QComboBox();output_space=W.QComboBox()
+        for row in spaces['inputs']:input_space.addItem(row['label'],row['key'])
+        input_space.addItem('自备 ST → LUT 输入的 bridge CUBE','custom')
+        for row in spaces['outputs']:output_space.addItem(row['label'],row['key'])
+        form.addRow('CUBE 输入空间',input_space);form.addRow('CUBE 输出空间',output_space)
+        self.field(form,'compile_input_bridge','自备 bridge（高级）',kind='file',filter='CUBE (*.cube)')
+        self.fields['compile_input_bridge'].setEnabled(False)
+        input_space.currentIndexChanged.connect(lambda *_:self.fields['compile_input_bridge'].setEnabled(input_space.currentData()=='custom'))
+        identify=W.QPushButton('从文件名／TITLE 读取建议（仍需确认）')
+        def suggest_space():
+            try:
+                suggestion=lutspaces.suggest(Path(self.text('compile_source')))
+                index=input_space.findData(suggestion['input_space'])
+                if index>=0:input_space.setCurrentIndex(index)
+                index=output_space.findData(suggestion['output_space'])
+                if index>=0:output_space.setCurrentIndex(index)
+            except (OSError,ValueError)as error:W.QMessageBox.information(dialog,'未读取到建议',str(error))
+        identify.clicked.connect(suggest_space);form.addRow('',identify)
         self.field(form, 'compile_icon', '菜单图标（可选）')
         self.fields['compile_icon'].setMaxLength(4)
         self.fields['compile_icon'].setPlaceholderText('自动匹配，或输入 1–4 字符，如 F400、5213、RN')
@@ -1342,7 +1051,7 @@ class Window(W.QMainWindow):
         self.fields['compile_icon'].textChanged.connect(update_icon_preview)
         last_auto=dict(name='',icon='')
         def suggest_icon(*_):
-            row=lookup(self.text('compile_name'));text=row['icon_text'] if row else ''
+            row=lookup(self.text('compile_name'));text=row['icon_text'] if row else 'LUT'
             if self.text('compile_icon') in ('',last_auto['icon']):self.fields['compile_icon'].setText(text)
             last_auto['icon']=text
         def suggest_name(*_):
@@ -1362,25 +1071,28 @@ class Window(W.QMainWindow):
             'source': self.text('compile_source'), 'name': self.text('compile_name'),
             'output': self.text('compile_output'), 'model': self.text('compile_hybrid_response'),
             'include_menu_icon':include_icon.isChecked(),'menu_icon_text':self.text('compile_icon'),
-            'input_space': 'sony-st-srgb', 'passes': 12})))
+            'input_space': input_space.currentData(),'output_space':output_space.currentData(),
+            'bridge':self.text('compile_input_bridge')if input_space.currentData()=='custom'else None, 'passes': 12})))
         layout.addWidget(run)
         dialog.exec()
 
     def plugin_dialog(self):
         self.launch('plugin_install', {})
 
-    def one_click_restore(self):
-        roots = [str(data_root() / 'backups'), str(data_root() / 'initial-checkpoints')]
-        for key in ('fl23_backup', 'look_backup', 'restore_backup'):
-            if key in self.fields and self.text(key):
-                roots.append(self.text(key))
-        self.fields['restore_work'].setText(self.work('recovery'))
-        self.launch('restore_auto', dict(self.common(), roots=roots, workspace=self.text('restore_work'),
-            sony_firmware=self.text('factory_voice_firmware') or None))
 
     def launch(self, action, arguments):
         if self.process is not None:
             return
+        if action in ('firmware_build','firmware_factory_build'):
+            source=str(arguments.get('sony_firmware')or'').strip()
+            if not source or not Path(source).is_file():
+                W.QMessageBox.information(self,'请选择本地固件','请先选择电脑上的官方 A7C II 2.01 BODYDATA.DAT，再生成固件。')
+                return False
+            arguments=dict(arguments,sony_firmware=source)
+        if action=='firmware_build' and not (hasattr(self,'install_guide')and self.install_guide.pending=='firmware_build'):
+            W.QMessageBox.information(self,'卡刷前先写入配置',
+                '生成只处理电脑文件。'+reloadguide.PREFLASH_SETTINGS+
+                '已授信的机身不必重新安装公钥；更新末尾不再运行额外配置脚本。')
         if action=='firmware_trust_prepare':
             from .firmwaretrust import validate
             try:validate(arguments)
@@ -1391,30 +1103,8 @@ class Window(W.QMainWindow):
             try:validate_request(action,arguments)
             except (ValueError,OSError,KeyError) as exc:
                 W.QMessageBox.information(self,'请检查安装记录',str(exc));return
-        if action=='ssh_verify_update' and not Path(arguments.get('workspace',''),'update.private.json').is_file():
+        if action=='ssh_verify_update' and not any(Path(arguments.get('workspace',''),n).is_file()for n in ('update.private.json','command.private.json')):
             W.QMessageBox.information(self,'尚无待核对的更新','请先完成本次 SSH 更新，再断电重开并核对。');return
-        if action == 'setup_all' and not self.drivers_first(arguments):
-            return
-        if action=='direct_looks_import' and arguments.get('failed_workspace'):
-            action='direct_resume_looks'
-        if action=='direct_looks_import':
-            try:
-                from .worker import setup_runtime
-                setup_runtime()
-                from .lookbatch import options
-                chosen=options(arguments.get('operations',arguments.get('looks',[])))
-                arguments=dict(arguments,operations=chosen['slot_operations'])
-            except (ValueError,OSError,KeyError,TypeError) as exc:
-                W.QMessageBox.warning(self,'请检查操作清单',str(exc));return
-        if action=='ssh_save_looks':
-            try:
-                from .worker import setup_runtime
-                setup_runtime()
-                from .lookbatch import options
-                arguments=dict(arguments,operations=options(arguments['operations'],allow_menu_icons=True)['slot_operations'])
-                if not arguments.get('baseline'):raise ValueError('请在连接设置中选择本地固件构建结果的 baseline 目录。')
-            except (ValueError,OSError,KeyError,TypeError) as exc:
-                W.QMessageBox.warning(self,'请检查滤镜更新',str(exc));return
         if action=='ssh_sound_custom':
             try:
                 from .actions.sound import converted_file
@@ -1429,16 +1119,6 @@ class Window(W.QMainWindow):
                 W.QMessageBox.warning(self, '声音工作区需要核对', str(exc));return
             if not ready:
                 W.QMessageBox.information(self, '请先转换片段', '还没有转换好的声音。请先选择声音文件、设置起点和长度，点「转换所选片段」，成功后再试听。');return
-        if action == 'restore_verify' and not Path(arguments.get('workspace', ''), 'rollback.private.json').is_file():
-            # This button checks a backup restore only. A built-in or firmware
-            # file restore is checked by the factory verification button.
-            answer = W.QMessageBox.question(self, '这里没有旧备份恢复记录',
-                '“核对旧备份恢复后的加载状态”只用于“使用旧备份回到过去的状态”。\n'
-                '用原厂来源恢复后，应点“继续完成一键恢复”。\n现在改为核对原厂恢复？',
-                W.QMessageBox.Yes | W.QMessageBox.Cancel, W.QMessageBox.Yes)
-            if answer != W.QMessageBox.Yes:
-                return
-            action, arguments = 'direct_verify', self.direct_verify_args('factory', bool(arguments.get('accepted')))
         if action == 'driver_uninstall':
             answer = W.QMessageBox.question(self, '卸载相机驱动',
                 '将备份并卸载 Sony 054C:0E8A／0336 的第三方驱动，让 Windows 重新识别相机。\n'
@@ -1448,50 +1128,24 @@ class Window(W.QMainWindow):
                 return
         writing = action in jobs.POWER_ACTIONS
         if writing:
-            target = (('首页勾选的功能；替换自订 1–6：' + presets.SUMMARY if arguments.get('options', {}).get('preset_pack') else '首页勾选的功能及所选 A7Look 槽位') if action == 'setup_all' else
-                      '自动选择已连接机身最早可用的完整备份' if action == 'restore_auto' else
-                      arguments.get('backup') if action == 'restore' else arguments.get('look') or arguments.get('workspace'))
-            if action in jobs.DIRECT_ACTIONS:
-                target = ({'direct_preview_pending': '取景器与实时预览第三版候选',
-                           'direct_preview_native': '第一版原生刷新条件',
-                           'direct_preview_legacy': '测试前的旧版刷新方式'}[action]
-                          if action in ('direct_preview_pending', 'direct_preview_native', 'direct_preview_legacy') else
-                          '；'.join('自订 %s → %s' % (r['slot'], '恢复 ST 默认' if r['action']=='restore' else '写入 '+r['name']) for r in arguments.get('operations', []))
-                          if action == 'direct_looks_import' else
-                          '继续已写好名称的外观安装：'+arguments.get('failed_workspace','') if action=='direct_resume_looks' else
-                          '按当前相机重新恢复原厂 2.01 功能' if action == 'direct_resume_factory' else
-                          '竖屏显示＋Fn／子菜单线框修正' if action=='vertical_enable' else
-                          '关闭竖屏显示并撤销线框修正' if action=='vertical_disable' else
-                          '原厂 2.01 功能' if action == 'direct_factory_reset' else
-                          'FL2／FL3：启用' if action == 'direct_fl23_enable' else
-                          'FL2／FL3：从列表移除' if action == 'direct_fl23_disable' else
-                          '自动白平衡：启用优先级实验' if action == 'direct_wb_enable' else
-                          '自动白平衡：恢复原生优先级' if action == 'direct_wb_disable' else
-                          '自订 %s：%s' % (arguments.get('slot'), 'ST 默认' if action == 'direct_slot_default'
-                                           else arguments.get('name') or Path(arguments.get('look', '')).stem))
-            scope = ('保存本机更新器原始备份，安装应用公钥与四个验签库；私钥不写入相机。当前仅完成离线与虚拟机测试。\n' if action=='firmware_trust_install' else
-                     '从本机首次安装备份恢复更新器原厂授信，逐批及整分区读回。此步骤不恢复机身功能或版本号。\n' if action=='firmware_trust_restore' else
-                     '仅修正机内版本资料，不恢复原厂程序或官方签名信任；结束后按提示断电重开。\n' if action=='ssh_restore_version' else
-                     '仅更改白平衡两处优先级参数读取，保留标准 AWB、机身校准与创意外观。写入后按提示断电重开。\n' if action in ('direct_wb_enable','direct_wb_disable') else
-                     '在内存目录上传独立 SSH 服务并监听 2222；不写固件、校准或开机文件。\n' if action=='ssh_start' else
-                     '仅更改 CP 的 LUT 刷新代码；保留色表、名称、配方和其他功能。写入后完整断电重开，检查横线及切槽刷新。\n' if action in ('direct_preview_native','direct_preview_legacy','direct_preview_pending') else
-                     '一次应用清单内的写入和恢复，未添加的槽位保持原样；保留 FL23、声音和竖屏。写入读回完成后统一提示断电重开。\n' if action=='direct_looks_import' else
-                     '自动准备驱动并安装首页勾选的功能。断电重开必须由你按提示完成；结果不明时停止，不自动重复刷写。\n' if action == 'setup_all' else
-                     '从当前相机字节重新生成原厂恢复计划；旧记录不影响本次操作，已符合目标的内容不重复写入。\n' if action == 'direct_resume_factory' else
-                     '将移除项目程序修改、将六个自订栏位设为 ST，快门设回机械并关闭新增电子快门音效；旧配方不找回。'+
-                     ('本次同时补回语音包并解除置灰；' if arguments.get('restore_voice',True) else '本次保留语音已删除与置灰状态；')+
-                     '重开后继续完成恢复，再清除私有音效文件。\n' if action == 'direct_factory_reset' else
-                     '先关闭语音指南并将机内语音选项置灰；写入后须按提示重开，再点同一按钮核对并删除十份语音音频。不会删除索引、对焦提示音或快门音频。\n' if action=='voice_cleanup' else
-                     '从所选官方 2.01 文件或语音备份完整补回资源，核对全部文件后再解除限制。\n' if action=='voice_restore' else
-                     '只关闭 FL2／FL3 列表入口，保留 LUT 与共用代码。请先在相机选择 ST。\n' if action == 'direct_fl23_disable' else
-                     '将所选自订栏位设为 ST 默认，保留其他栏位。\n' if action == 'direct_slot_default' else '')
+            target=arguments.get('look')or arguments.get('workspace')or''
+            if action=='direct_looks_import':
+                target='；'.join('自订 %s → %s'%(r['slot'],'恢复 ST 默认'if r['action']=='restore'else'写入 '+r['name'])for r in arguments.get('operations',[]))
+            scope=('仅写入并保存所选刷前配置；之后保持开机，直接手动卡刷。\n'if action=='firmware_settings_install'else
+                   '保存机身原始备份并安装公钥。\n'if action=='firmware_trust_install'else
+                   '仅将更新器版本设为 2.00，随后手动卡刷恢复包。\n'if action in ('usb_restore_version','ssh_restore_version')else
+                   '只修改版本资料。\n'if action=='usb_set_version'else
+                   '按所选范围保存外观或快门声音，完成后按提示重开。\n')
             ssh_write=action in ('ssh_save_looks','ssh_sound_custom','ssh_sound_switch','ssh_apply_update','ssh_restore_version')
             connection='Wi-Fi / SSH' if ssh_write else 'USB'
             if ssh_write:
                 target=('所选 %d 个滤镜槽位'%len(arguments['operations']) if action=='ssh_save_looks' else
                     '版本号 '+arguments['source_version']+' → 2.00（仅修改版本资料）' if action=='ssh_restore_version' else
                     {'electronic':'电子快门音效','mechanical':'机械快门音效','both':'电子与机械快门音效'}.get(arguments.get('selection'),'本次更新'))
-            firmware_label='基于官方 2.01 的研究固件' if action=='ssh_restore_version' else '固件 2.01'
+            if action=='usb_restore_version':target='更新器版本资料 → 2.00；之后手动卡刷'
+            if action=='usb_set_version':target='更新器版本资料 → '+arguments['target_version']
+            firmware_label=('官方 2.01 或现有 3.10 固件' if action=='firmware_settings_install' else
+                '基于官方 2.01 的研究固件' if action in ('usb_restore_version','ssh_restore_version') else '固件 2.01')
             answer = W.QMessageBox.question(self, '开始相机写入',
                 scope + '目标：' + str(target) + '\n请确认机身为 ILCE-7CM2、'+firmware_label+'，电量充足（建议至少 50%）。\n'
                 '操作和读回期间保持供电、'+connection+' 连接，不要关机或断开连接。\n确认供电充足并开始？',
@@ -1502,28 +1156,18 @@ class Window(W.QMainWindow):
             arguments.pop('battery', None)
         if action=='ssh_save_looks':self.settings['look_ssh_work']=arguments['workspace']
         if action=='ssh_restore_version':self.settings['factory_version_work']=arguments['workspace']
+        if action=='usb_restore_version':self.settings['factory_usb_version_work']=arguments['workspace']
         if action=='firmware_trust_install':
             self.settings['trust_install_work']=arguments['workspace']
-            self.fields['trust_record'].setText(arguments['workspace'])
         if action in ('firmware_trust_install','firmware_trust_restore'):
             self.settings['trust_latest_work']=arguments['workspace']
         if action in ('sound_import','sound_generate','sound_volume'):self.stop_sound_preview()
-        if action in jobs.DIRECT_ACTIONS:
-            group = ('preview' if action in ('direct_preview_native', 'direct_preview_legacy', 'direct_preview_pending') else
-                     'factory' if action in ('direct_factory_reset', 'direct_resume_factory') else 'wb' if action in ('direct_wb_enable','direct_wb_disable') else 'fl23' if 'fl23' in action else 'look')
-            self.settings[group + '_direct_work'] = arguments['workspace']
-            if group=='look':
-                self.settings['look_resume_source']=arguments.get('failed_workspace','')
-            if group!='look':getattr(self, group + '_accept').setChecked(False)
-        if action == 'setup_all':
-            self.settings['setup_work'] = arguments['workspace']
-            self.setup_button.setText('正在安装…')
-            for box in (self.setup_presets,self.setup_fl23,self.setup_sound,self.setup_vertical,self.setup_plugin):box.setEnabled(False)
+        if action=='direct_looks_import':self.settings['look_direct_work']=arguments['workspace']
         for key, field in self.fields.items():
             self.settings[key] = field.text()
         write_json(data_root() / 'desktop.json', self.settings)
         self.current_job = jobs.new_job(action, arguments)
-        if action in ('direct_looks_import','direct_resume_looks') or (action=='direct_verify' and arguments.get('workspace')==self.settings.get('look_direct_work')):
+        if action=='direct_looks_import' or (action=='direct_verify' and arguments.get('workspace')==self.settings.get('look_direct_work')):
             self.settings['look_job_dir']=str(self.current_job)
             write_json(data_root()/'desktop.json',self.settings)
         self.log_offset = 0
@@ -1547,6 +1191,8 @@ class Window(W.QMainWindow):
         self.process.finished.connect(self.finished)
         self.process.errorOccurred.connect(self.process_error)
         self.process.start(command[0], command[1:])
+        if hasattr(self,'install_guide'):self.install_guide.refresh()
+        return True
 
     def process_output(self):
         text = bytes(self.process.readAllStandardOutput()).decode('utf-8', errors='replace')
@@ -1582,132 +1228,54 @@ class Window(W.QMainWindow):
             self.status_dot.setProperty('state',state)
             self.status_dot.style().unpolish(self.status_dot);self.status_dot.style().polish(self.status_dot)
 
-    def finished(self, code, exit_status):
-        if self.process is None:
-            return
-        self.tail_log()
-        status_path = self.current_job / 'status.private.json'
-        status = json.loads(status_path.read_text(encoding='utf-8')) if status_path.exists() else {}
-        success = code == 0 and status.get('phase') == 'SUCCEEDED'
-        if success and (status.get('action') in ('usb_prepare', 'connect') or
-                        (status.get('action') == 'setup_all' and 'drivers' in status.get('result', {}).get('completed_steps', []))):
-            self.settings['connection_verified'] = True
-        if success and status.get('action') == 'restore_auto':
-            self.fields['restore_backup'].setText(status['result']['backup'])
-            self.fields['restore_work'].setText(status['result']['workspace'])
-        if success and status.get('action') in ('direct_factory_reset', 'direct_resume_factory'):
-            self.settings['factory_direct_work'] = status['result']['workspace']
-            self.fields['factory_failed_work'].setText(status['result']['workspace'])
-        if success and status.get('action')=='direct_verify' and status['result'].get('mode')=='factory_reset':
-            self.settings['factory_direct_work']=status['result']['workspace']
-        if success and status.get('action')=='firmware_trust_verify':
-            self.settings['trust_latest_work']=status['result']['workspace']
-        if success and (status.get('action') in ('direct_looks_import','direct_resume_looks') or
-                (status.get('action')=='direct_verify' and status['result'].get('mode') in ('install_all','look_import','slot_default'))):
-            self.settings['look_direct_work']=status['result']['workspace']
-            self.settings.pop('look_resume_source',None)
-        if success and status.get('action') == 'setup_all':
-            for key in ('sound_workspace','sound_backup'):
-                target='sound_work' if key=='sound_workspace' else 'sound_backup'
-                if status['result'].get(key):self.fields[target].setText(status['result'][key])
-        for key, field in self.fields.items():
-            self.settings[key] = field.text()
-        write_json(data_root() / 'desktop.json', self.settings)
-        waiting=success and reloadguide.required(status.get('action'),status.get('result',{}))
-        sound_notice=reloadguide.sound_notice(status.get('action'),status.get('result',{})) if success else None
-        factory_wait=success and status.get('result',{}).get('mode')=='factory_reset' and (status['result'].get('phase')=='AWAITING_RELOAD' or status['result'].get('verification_required'))
-        factory_done=success and status.get('result',{}).get('mode')=='factory_reset' and status['result'].get('recovery_complete') is True
-        if factory_done:self.clear_installation_state()
-        elif factory_wait:self.clear_installation_state(verified=False)
-        resource_wait=status.get('result',{}).get('phase') in ('WAIT_RESOURCE_RELOAD','AWAITING_RESOURCE_RELOAD')
-        resource_ready=success and status.get('result',{}).get('phase')=='RESOURCE_RELOAD_VERIFIED'
-        setup_wait=waiting and status.get('action')=='setup_all'
-        self.status.setText(('名称已写好，程序尚未写入。按弹窗断电重开、接回 USB，再点击首页“继续安装”。' if resource_wait and setup_wait else
-                             '名称已写好，程序尚未写入。按弹窗断电重开、接回 USB，再点自定义外观页“继续槽位更改”。' if resource_wait else
-                             '批量外观写入完成，已完整读回；按弹窗统一断电重开即可加载。' if status.get('action')=='direct_looks_import' else
-                             'FL23 操作完成，写入与完整读回均已结束。重开相机后生效，无需再点核对。' if
-                             status.get('result',{}).get('mode') in ('fl23_enable','fl23_disable') else
-                             '读写已结束。拔 USB → 等灯停 → 关机并等灯灭 → 取电池至少 1 分钟 → 开机 → 接回 USB → 点击首页“继续安装”。详见弹窗。' if setup_wait else
-                             '读写已结束。拔 USB → 等灯停 → 关机并等灯灭 → 取电池至少 1 分钟 → 开机；详见弹窗。') if waiting else
-                           '名称与只读挂载已确认；程序尚未安装，请点首页“继续安装”。' if resource_ready and status.get('action')=='setup_all' else
-                           '名称与只读挂载已确认；程序尚未安装，请点自定义外观页“继续槽位更改”。' if resource_ready else
-                           '完成。请按日志提示进行下一步。' if success else
-                           '操作停止：' + status.get('error', '进程异常退出，退出码 ' + str(code)) + '。请导出诊断包。')
-        if not success and sys.platform == 'win32' and self.driver_step_failed(status.get('action')) and status.get('error_type')!='ServiceExitUnconfirmed':
-            self.status.setText(self.status.text() + DRIVER_HINT)
-        if sound_notice:self.status.setText(sound_notice['status'])
-        if success and status.get('action') in ('sound_import','sound_generate','sound_volume'):
-            gain=status['result'].get('volume_gain_db',0)
-            self.sound_preview_status.setText('电脑声音已准备好 · 音量调整 %+.0f dB · 可试听或保存'%gain)
-        if success and status.get('action','').startswith('ssh_'):
-            phase=status['result']['phase']
-            messages={'SSH_VERIFIED':'SSH 连接正常。','AWAITING_RELOAD':'写入与读回已结束，请按提示取出电池后重开。',
-                'LOADED':'已确认重开并完成文件／任务核对；请检查实际拍摄和音效。','IDLE':'相机当前没有接口更新任务。',
-                'PREPARED':'电脑端更新已生成。'}
-            if status['result'].get('kind')=='version':
-                messages['LOADED']='版本资料核对完成；尚未完成原厂签名信任恢复。'
-            self.status.setText(messages.get(phase,phase)+status['result'].get('message',''))
-            if status['result'].get('next_baseline'):
-                self.fields['ssh_update_baseline'].setText(status['result']['next_baseline'])
-                self.settings['ssh_update_baseline']=status['result']['next_baseline']
-                write_json(data_root()/'desktop.json',self.settings)
-        if factory_wait:self.status.setText('恢复尚未完成：写入和读回已结束，必须断电重启、接回 USB，再点“继续完成一键恢复”。')
-        elif factory_done:self.status.setText('原厂恢复核对通过，旧安装状态已清除。请继续检查机身拍摄和回放；重新安装请点首页“一键安装”。')
-        if success and status.get('action') in ('firmware_trust_install','firmware_trust_restore','firmware_trust_verify'):
-            self.status.setText('更新器写入与整分区读回已结束，请断电重开后核对。' if waiting else
-                '重开后的更新器内容核对通过；完整更新器启动与实际卡刷尚未验收。')
-        self.progress.setRange(0, 100)
-        self.progress.setValue(40 if waiting and status.get('result',{}).get('mode')=='voice_disable' else
-                              70 if factory_wait else 0 if sound_notice and status.get('action')=='sound_install' else
-                              40 if success and (resource_wait or resource_ready) else 70 if waiting and status.get('action')=='setup_all' else 100 if success else 0)
-        for button in self.buttons:
-            button.setEnabled(True)
-        self.stop.setEnabled(False)
-        self.process.deleteLater()
-        self.process = None
-        if success and status.get('action') in ('direct_looks_import','direct_resume_looks','direct_verify') and status.get('result',{}).get('mode') in ('install_all','look_import','slot_default') and status['result'].get('phase') in ('COMPLETED','AWAITING_RELOAD','LOADED','COMPLETE') and (status['action']!='direct_verify' or self._look_displayed_pending is not None):
+    def finished(self,code,exit_status):
+        if self.process is None:return
+        self.tail_log();path=self.current_job/'status.private.json'
+        status=json.loads(path.read_text(encoding='utf-8'))if path.exists()else{}
+        success=code==0 and status.get('phase')=='SUCCEEDED'
+        action=status.get('action');result=status.get('result',{})
+        if success and action in ('usb_prepare','connect'):self.settings['connection_verified']=True
+        if success and action=='firmware_trust_verify':self.settings['trust_latest_work']=result['workspace']
+        if success and action in ('direct_looks_import','direct_verify')and result.get('mode')in ('install_all','look_import','slot_default'):
+            self.settings['look_direct_work']=result['workspace'];self.settings.pop('look_resume_source',None)
+        if success and result.get('next_baseline'):
+            self.settings['ssh_update_baseline']=result['next_baseline']
+        if success and action in ('firmware_build','firmware_factory_build')and result.get('baseline'):
+            self.settings['ssh_update_baseline']=result['baseline']
+        for key,field in self.fields.items():self.settings[key]=field.text()
+        write_json(data_root()/'desktop.json',self.settings)
+        waiting=success and reloadguide.required(action,result)
+        sound_notice=reloadguide.sound_notice(action,result)if success else None
+        message=result.get('message')or('读写已结束，请按弹窗重开相机。'if waiting else'操作完成。')
+        if not success:message='操作停止：'+status.get('error','进程异常退出，退出码 '+str(code))+'。请导出诊断包。'
+        if not success and sys.platform=='win32'and self.driver_step_failed(action)and status.get('error_type')!='ServiceExitUnconfirmed':message+=DRIVER_HINT
+        if sound_notice:message=sound_notice['status']
+        if success and action in ('firmware_build','firmware_factory_build')and result.get('signed'):
+            message='固件已生成：'+result['candidate']+'。SD 卡只需要这份 BODYDATA.DAT。'
+        self.status.setText(message)
+        if success and action in ('sound_import','sound_volume'):
+            self.sound_preview_status.setText('电脑声音已准备好 · 音量调整 %+.0f dB · 可试听或保存'%result.get('volume_gain_db',0))
+        self.progress.setRange(0,100);self.progress.setValue(100 if success else 0)
+        for button in self.buttons:button.setEnabled(True)
+        self.stop.setEnabled(False);self.process.deleteLater();self.process=None
+        self.refresh_status_dot()
+        if success and action in ('direct_looks_import','direct_verify')and result.get('mode')in ('install_all','look_import','slot_default')and result.get('phase')in ('COMPLETED','AWAITING_RELOAD','LOADED','COMPLETE'):
             self.look_editor.set_operations([])
-        self.refresh_look_controls()
-        self.refresh_setup_controls()
-        self.refresh_factory_controls()
-        self.refresh_trust_controls()
-        driver_notice=connectionguide.completion(status.get('action'),status.get('result',{})) if success else None
-        if driver_notice:
-            self.status.setText(driver_notice[0])
-            W.QMessageBox.information(self,*driver_notice)
+        self.refresh_look_controls();self.refresh_factory_controls();self.refresh_trust_controls()
+        self.install_guide.finished(status,success);self.install_guide.refresh()
+        driver_notice=connectionguide.completion(action,result)if success else None
+        if driver_notice:self.status.setText(driver_notice[0]);W.QMessageBox.information(self,*driver_notice)
+        elif success and action=='firmware_settings_install':
+            self.status.setText('刷前配置已保存；拔 USB 后保持开机，直接手动卡刷。')
+            W.QMessageBox.information(self,'刷前配置已保存',reloadguide.PREFLASH_SETTINGS)
         elif not success and status.get('error_type')=='ServiceExitUnconfirmed':
             W.QMessageBox.warning(self,'驱动步骤停止：尚未确认退出服务模式',status.get('error','请保留日志。'))
-        elif sound_notice:
-            W.QMessageBox.information(self,sound_notice['title'],sound_notice['text'])
-        elif status.get('action') in ('voice_cleanup','voice_restore') and success and not waiting:
-            W.QMessageBox.information(self,'语音资源操作完成',status['result'].get('message','语音文件已完整写回；关闭限制已解除，语音指南仍保持关闭，可在机内自行开启。'))
-        elif status.get('action')=='backup_current' and success:
-            result=status['result']
-            self.fields['restore_backup'].setText(result['workspace'])
-            self.settings['restore_backup']=result['workspace']
-            write_json(data_root()/'desktop.json',self.settings)
-            W.QMessageBox.information(self,'当前状态备份完成',
-                '已保存程序、外观、设置和名称，并通过本地校验。没有写入相机。\n'
-                '这是当前状态备份，不是原厂基准。\n保存位置：'+result['workspace']+
-                ('\n语音包也已另存；当前项目还原不会自动写回语音包。' if result.get('voice_backup') else ''))
-        elif status.get('action')=='usb_stability':
-            if success:
-                result=status['result']
-                W.QMessageBox.information(self,'USB 只读检测通过',
-                    '已完成 %d 轮、共 %.1f MB 程序文件只读传输，持续 %.0f 秒，每轮字节一致。\n\n没有写入固件、设置或运行原生写入程序。\n\n%s'%
-                    (len(result['rounds']),result['total_bytes']/1024/1024,result.get('seconds',0),result['note']))
-            else:
-                error=status.get('error','请查看日志并换线后重测。')
-                W.QMessageBox.warning(self,'USB 连接检测未完成' if '未完成' in error else 'USB 连接检测未通过',error)
-        elif waiting:
-            self.show_reload_guide(setup=status.get('action')=='setup_all', mode=('resource_reload' if resource_wait else status.get('action') if
-                status.get('action','').startswith('sound_') else status.get('result',{}).get('mode')))
-        elif success and status.get('action')=='setup_all' and status.get('result',{}).get('phase')=='COMPLETE':
-            self.status.setText('安装完成。可查看上次安装结果，无需再次刷写。')
-            self.setup_button.setText('开始新的一键安装')
-            self.setup_result_button.setVisible(True)
-            for box in (self.setup_presets,self.setup_fl23,self.setup_sound,self.setup_vertical,self.setup_plugin):box.setEnabled(True)
-            self.show_setup_result()
+        elif sound_notice:W.QMessageBox.information(self,sound_notice['title'],sound_notice['text'])
+        elif action=='usb_stability':
+            if success:W.QMessageBox.information(self,'USB 只读检测通过',result.get('note','只读传输检测完成，没有写入相机。'))
+            else:W.QMessageBox.warning(self,'USB 连接检测未完成',status.get('error','请查看日志并换线后重测。'))
+        elif waiting:self.show_reload_guide(mode=action if action and action.startswith('sound_')else result.get('mode'))
+
 
     def process_error(self, error):
         if self.process and error == QtCore.QProcess.FailedToStart:
@@ -1718,12 +1286,16 @@ class Window(W.QMainWindow):
         QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(str(self.current_job or data_root())))
 
     def export_logs(self):
-        if not self.current_job:
-            return
+        job=self.current_job
+        if not job:
+            request=W.QFileDialog.getOpenFileName(self,'选择已有任务记录',
+                str(data_root()/'runs'),'任务记录 (request.private.json)')[0]
+            if not request:return
+            job=Path(request).parent
         path = W.QFileDialog.getSaveFileName(self, '导出诊断包', 'a7c2-diagnostics.zip', 'ZIP (*.zip)')[0]
         if path:
             try:
-                jobs.export_support(self.current_job, path)
+                jobs.export_support(job, path)
             except Exception as exc:
                 W.QMessageBox.warning(self, '导出失败', str(exc))
 
@@ -1753,18 +1325,9 @@ def main():
     if '--smoke-test' not in sys.argv and not require_consent():
         return 0
     window = Window()
-    if '--preview-gate-test' in sys.argv:
-        window.select_page(3)
     window.show()
-    if '--smoke-test' in sys.argv:
-        data_root().mkdir(parents=True, exist_ok=True)
-        for index in range(window.pages.count()):
-            window.select_page(index)
-            app.processEvents()
-            if not window.grab().save(str(data_root() / ('desktop-page-' + str(index + 1) + '.png'))):
-                raise OSError('Could not save desktop smoke screenshot')
-        window.select_page(9 if '--legacy-usb' not in sys.argv else 0)
-        QtCore.QTimer.singleShot(800, app.quit)
-    else:
-        QtCore.QTimer.singleShot(0,window.show_connection_notice)
+    if '--smoke-test'in sys.argv:
+        for key in window.page_widgets:
+            window.select_page(key);app.processEvents()
+        window.select_page('install');QtCore.QTimer.singleShot(800,app.quit)
     return app.exec()

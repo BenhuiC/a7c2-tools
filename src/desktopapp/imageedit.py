@@ -9,10 +9,29 @@ import sys
 from .paths import ROOT,write_json
 
 
-def linux_path(path):
-    path=Path(path).resolve()
-    if sys.platform=='win32':return '/mnt/'+path.drive[0].lower()+path.as_posix()[2:]
-    return str(path)
+def decode_output(value):
+    if isinstance(value,str):return value
+    if not value:return ''
+    if value.startswith((b'\xff\xfe',b'\xfe\xff')):return value.decode('utf-16',errors='replace')
+    if value.count(b'\0')>len(value)//8:return value.decode('utf-16-le',errors='replace')
+    try:return value.decode('utf-8')
+    except UnicodeDecodeError:return value.decode('mbcs' if sys.platform=='win32' else 'utf-8',errors='replace')
+
+
+def check_environment():
+    """Fail before extracting firmware or replacing previous output files."""
+    if sys.platform not in ('win32','darwin'):return None
+    folder=ROOT/'src/desktopapp/assets/image-tools'
+    programs={name:folder/(name+('.exe' if sys.platform=='win32' else '')) for name in ('debugfs','e2fsck')}
+    if any(not path.is_file() for path in programs.values()):
+        if sys.platform=='darwin':
+            raise ValueError('macOS 镜像工具缺失，请使用完整的最新版 App。无需另外安装 Python 或 Homebrew。')
+        raise ValueError('Windows 镜像工具缺失，请完整解压最新版工具包后重试。无需安装 Linux 环境。')
+    return programs
+
+
+def host_path(path):
+    return str(Path(path).resolve())
 
 
 def fat_cp(image,replacement):
@@ -58,19 +77,30 @@ def edit_images(originals,files,output):
             fat_cp(dest,rows['/cpapp-b.bin']['source'])
         else:
             plan=output/(role+'-edits.private.json')
-            write_json(plan,dict(image=linux_path(dest),files={p:(dict(delete=True) if row.get('delete') else
-                dict(row,source=linux_path(row['source']))) for p,row in rows.items()}))
+            write_json(plan,dict(image=host_path(dest),files={p:(dict(delete=True) if row.get('delete') else
+                dict(row,source=host_path(row['source']))) for p,row in rows.items()}))
             helper=ROOT/'dev/firmware/edit_ext2.py'
-            command=(['wsl','-d',os.environ.get('A7C2_WSL_DISTRO','Ubuntu-22.04'),'--','python3',linux_path(helper),linux_path(plan)]
-                     if sys.platform=='win32' else [sys.executable,str(helper),str(plan)])
-            if sys.platform!='win32' and getattr(sys,'frozen',False):
+            logfile=output/(role+'-debugfs.log')
+            if sys.platform in ('win32','darwin'):
+                import contextlib,importlib.util
+                programs=check_environment()
+                spec=importlib.util.spec_from_file_location('a7c2_edit_ext2',helper)
+                module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+                with logfile.open('w',encoding='utf-8') as log:
+                    with contextlib.redirect_stdout(log),contextlib.redirect_stderr(log):
+                        module.main(plan,debugfs=programs['debugfs'],e2fsck=programs['e2fsck'])
+            else:
+                command=[sys.executable,str(helper),str(plan)]
+            if sys.platform not in ('win32','darwin') and getattr(sys,'frozen',False):
                 python=shutil.which('python3')
                 if not python or not shutil.which('debugfs') or not shutil.which('e2fsck'):
-                    raise ValueError('本地映像构建需要 Linux Python 与 e2fsprogs；Windows 使用 WSL。当前 macOS 包未提供该构建环境。')
+                    raise ValueError('当前平台需要本地 Python3 与 e2fsprogs 镜像工具。')
                 command=[python,str(helper),str(plan)]
-            done=subprocess.run(command,capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=300)
-            (output/(role+'-debugfs.log')).write_text(done.stdout+'\n'+done.stderr,encoding='utf-8')
-            if done.returncode:raise ValueError('Offline image edit failed: '+done.stderr[-2000:])
+            if sys.platform not in ('win32','darwin'):
+                done=subprocess.run(command,capture_output=True,timeout=300)
+                stdout,stderr=decode_output(done.stdout),decode_output(done.stderr)
+                logfile.write_text(stdout+'\n'+stderr,encoding='utf-8')
+                if done.returncode:raise ValueError('离线镜像编辑失败：'+(stderr or stdout)[-2000:])
         # Independent reader must find every requested file with exact bytes.
         from .firmwarelocal import tools,stream_bytes
         _,_,ext2,fat=tools()

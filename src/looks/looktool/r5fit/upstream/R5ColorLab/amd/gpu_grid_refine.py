@@ -5,6 +5,11 @@ from gpu_tensor import TensorTools,stencil_tensor,provisional_coordinates,de2000
 
 
 def refine(grid,base,target,gate,weights,sweeps,perceptual_weight,response,progress,parameter_smoothing):
+    if isinstance(response,dict):
+        from measured_response import get
+        if getattr(get(response),'nonlinear_grid',False):
+            from latent_grid_refine import refine as latent_refine
+            return latent_refine(grid,base,target,gate,weights,sweeps,perceptual_weight,response,progress,parameter_smoothing)
     import torch
     from parameter_smoothing import multiplier,grid_cost
     from gpu_grid import edges

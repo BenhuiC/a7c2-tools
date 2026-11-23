@@ -38,9 +38,12 @@ FRONT = 0x39358e
 FRONT_BEFORE, FRONT_AFTER = bytes.fromhex('45f6'), bytes.fromhex('15e0')
 MECHANICAL = 0x3935aa
 MECHANICAL_BEFORE, MECHANICAL_AFTER = bytes.fromhex('0321'), bytes.fromhex('0121')
+# The native mode2/12-bit/full lookup shares kind3 with electronic mode3.
+# Only a custom mechanical installation reroutes it to mechanical whole kind14.
+VARIANT_WINDOW=(0xe76f90-0x108000,struct.pack('<I',3),struct.pack('<I',14))
 LEGACY_GATE = CONTEXT[:OFFSET - START] + AFTER + CONTEXT[OFFSET - START + 2:]
 WINDOWS = ((SELECTOR_TABLE, TABLE_BEFORE, TABLE_AFTER), (GATE, CONTEXT, GATE_ELECTRONIC),
-           (FRONT, FRONT_BEFORE, FRONT_AFTER), (MECHANICAL, MECHANICAL_BEFORE, MECHANICAL_AFTER))
+           (FRONT, FRONT_BEFORE, FRONT_AFTER), (MECHANICAL, MECHANICAL_BEFORE, MECHANICAL_AFTER),VARIANT_WINDOW)
 CP_GUARDS = (
     (0x39356c, bytes.fromhex('dfe801f0')),
     (0x393590, bytes.fromhex('1c4003210fe0')),
@@ -125,7 +128,9 @@ def patch(ap, cp, *, restore=False, mechanical=None, electronic=True):
     out = bytearray(cp)
     out[SELECTOR_TABLE:SELECTOR_TABLE+len(table)] = table
     out[GATE:GATE+len(gate)] = gate
-    for at, before, after in WINDOWS[2:]:out[at:at+len(before)] = before if restore else after
+    for at, before, after in WINDOWS[2:4]:out[at:at+len(before)] = before if restore else after
+    if restore:
+        at,before,_=VARIANT_WINDOW;out[at:at+len(before)]=before
     return {'appFw.so': ap, 'cpapp-b.bin': bytes(out)}
 
 

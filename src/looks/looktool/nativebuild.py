@@ -1,6 +1,8 @@
 """Compile job-pinned native workers from fresh verified inputs, offline."""
 import importlib.util,os,shutil,subprocess,sys
+from contextlib import contextmanager
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from . import firmware
 from .worker import NAMES
 
@@ -20,8 +22,8 @@ def zig_command(explicit=None):
         return [sys.executable,'-m','ziglang']
     raise ValueError('Device preparation needs Zig: install requirements-device.txt or supply --zig')
 
-def compile_worker(source,header,destination,zig=None,*,fingerprints=True):
-    destination=Path(destination);destination.parent.mkdir(parents=True,exist_ok=True)
+def zig_environment():
+    """Keep compiler caches on the host, independent of firmware output media."""
     env=os.environ.copy()
     if sys.platform=='darwin' and getattr(sys,'frozen',False):
         # Child compiler must use the system loader, not frozen Python dylibs.
@@ -31,14 +33,30 @@ def compile_worker(source,header,destination,zig=None,*,fingerprints=True):
             if original:env[key]=original
     cache=Path(os.environ.get('A7C2_ZIG_CACHE',Path.home()/'.cache/a7c2-lut/zig')).resolve()
     env['ZIG_GLOBAL_CACHE_DIR']=str(cache/'global');env['ZIG_LOCAL_CACHE_DIR']=str(cache/'local')
-    command=zig_command(zig)+['cc','-target','aarch64-linux-gnu','-shared','-fPIC','-O2',
-        '-ffreestanding','-fno-builtin','-fno-stack-protector','-fno-unwind-tables','-fno-asynchronous-unwind-tables',
-        '-nostdlib','-g0','-Wl,--strip-debug','-Wl,--no-undefined','-Wl,-Bsymbolic','-Wl,-z,noexecstack',
-        '-I',str(ROOT/'src/fl23/native'),'-I',str(Path(header).parent),
-        '-DPATCH_MANIFEST="'+Path(header).resolve().as_posix()+'"','-o',str(destination),str(source)]
-    result=subprocess.run(command,env=env,capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=180,
-        creationflags=0x08000000 if os.name=='nt' else 0)
-    if result.returncode:raise ValueError('Native compilation failed: '+result.stderr[-4000:])
+    return env
+
+@contextmanager
+def zig_output_path(destination,env):
+    """Link on the host volume, then write ordinary output bytes."""
+    cache=Path(env['ZIG_LOCAL_CACHE_DIR']).parent
+    cache.mkdir(parents=True,exist_ok=True)
+    with TemporaryDirectory(prefix='output-',dir=cache) as folder:
+        local=Path(folder)/Path(destination).name
+        yield local
+        Path(destination).write_bytes(local.read_bytes())
+
+def compile_worker(source,header,destination,zig=None,*,fingerprints=True):
+    destination=Path(destination);destination.parent.mkdir(parents=True,exist_ok=True)
+    env=zig_environment()
+    with zig_output_path(destination,env) as local:
+        command=zig_command(zig)+['cc','-target','aarch64-linux-gnu','-shared','-fPIC','-O2',
+            '-ffreestanding','-fno-builtin','-fno-stack-protector','-fno-unwind-tables','-fno-asynchronous-unwind-tables',
+            '-nostdlib','-g0','-Wl,--strip-debug','-Wl,--no-undefined','-Wl,-Bsymbolic','-Wl,-z,noexecstack',
+            '-I',str(ROOT/'src/fl23/native'),'-I',str(Path(header).parent),
+            '-DPATCH_MANIFEST="'+Path(header).resolve().as_posix()+'"','-o',str(local),str(source)]
+        result=subprocess.run(command,env=env,capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=180,
+            creationflags=0x08000000 if os.name=='nt' else 0)
+        if result.returncode:raise ValueError('Native compilation failed: '+result.stderr[-4000:])
     blob=destination.read_bytes()
     if len(blob)>65536:raise ValueError('Native worker exceeds current staging limit')
     from elftools.elf.elffile import ELFFile

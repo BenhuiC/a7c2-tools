@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'src/looks'))
-from looktool.fixedlookscode import code
+from looktool.fixedlookscode import code,STATUS_ICON_OFFSETS
 
 def generate(source):
     raw=Path(source).read_bytes()
@@ -27,6 +27,7 @@ def generate(source):
         read_only[str(at)]=expected.hex()
     read_only[str(0x41af2dc)]=raw[0x41af2dc:0x41af2dc+24].hex()
     return dict(schema='a7c2-fixed-looks/1',read_only=read_only,
+        status_icon_offsets=list(STATUS_ICON_OFFSETS),
         before={str(at):raw[at:at+len(value)].hex() for at,value in spans.items()},
         templates=[{str(at):value.hex() for at,value in code(mask).items()} for mask in range(64)],
         menu_image_fields=[dict(offset=0x59896e8+i*0xb8+0x48,

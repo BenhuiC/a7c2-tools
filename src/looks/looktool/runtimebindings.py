@@ -75,6 +75,11 @@ def build(ap,selected,directory,zig=None):
     if fixedlooks.present(ap):
         fixed=fixedlooks.inspect(ap)
         fixed_windows=fixedlooks.windows(fixed['mask'])
+        if not fixed['live_status_slot_icons']:
+            # An earlier fixed-preset AP remains usable for settings writes;
+            # guard its inspected status bytes rather than requiring a reflash.
+            for at in fixedlooks.asset().get('status_icon_offsets',()):
+                fixed_windows[at]=ap[at:at+len(fixed_windows[at])]
         for offset,code in list(signatures.items()):
             if any(at<=offset<at+len(raw) for at,raw in fixed_windows.items()):
                 signatures[offset]=ap[offset:offset+len(bytes.fromhex(code))].hex()

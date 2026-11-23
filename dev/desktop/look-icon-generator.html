@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>A7Look 图标生成器</title>
+<style>
+:root{font-family:Inter,"Segoe UI","Microsoft YaHei",sans-serif;color:#182334;background:#f2f5fa;font-size:14px;--blue:#1767dc;--line:#dfe5ee}*{box-sizing:border-box}body{margin:0}main{max-width:1060px;margin:42px auto;padding:0 24px}header{display:flex;align-items:center;gap:14px;margin-bottom:28px}.mark{background:var(--blue);color:white;font-weight:800;padding:12px;border-radius:13px;letter-spacing:-1px}h1{font-size:25px;margin:0 0 5px;letter-spacing:-.7px}p{margin:0;color:#667286;line-height:1.7}.badge{margin-left:auto;font-size:12px;color:#46647f;background:#e6edf6;padding:6px 10px;border-radius:20px}.workspace{display:grid;grid-template-columns:1fr 1fr;gap:20px}.panel{background:white;border:1px solid var(--line);border-radius:17px;padding:24px}.tabs{display:flex;gap:6px;padding:4px;background:#eff3f8;border-radius:10px;margin-bottom:24px}.tabs button{flex:1;border:0;background:transparent;padding:10px;border-radius:7px}.tabs button[aria-selected=true]{background:white;color:var(--blue);box-shadow:0 1px 4px #12274712}h2{font-size:15px;margin:0 0 17px}label{display:block;font-size:13px;font-weight:600;margin-bottom:8px}input[type=text],select{width:100%;padding:11px 12px;border:1px solid #cbd5e2;border-radius:9px;font:inherit;background:white}input[type=text]{font-size:23px;letter-spacing:2px}input[type=file]{max-width:100%;font:inherit;font-size:12px}button{font:inherit;cursor:pointer;border:1px solid #cdd7e4;padding:10px 14px;border-radius:9px;background:white;color:#24334a}button:hover{border-color:var(--blue);color:var(--blue)}button.primary{background:var(--blue);color:white;border-color:var(--blue)}button:disabled{opacity:.45;cursor:not-allowed}.field{margin-bottom:20px}.row{display:flex;align-items:center;gap:12px}.row>*{flex:1}.hint{font-size:12px;margin-top:8px;line-height:1.7;color:#748097}.range{width:100%;accent-color:var(--blue)}output{font-size:12px;color:#63738a;font-variant-numeric:tabular-nums;min-width:40px;text-align:right}.preview{display:flex;align-items:center;justify-content:center;border-radius:12px;min-height:205px;background:#101722}.preview canvas{width:208px;height:152px;image-rendering:pixelated}.previews{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}.mini{border:1px solid var(--line);border-radius:10px;text-align:center;padding:14px;color:#748097;font-size:12px}.mini canvas{display:block;margin:8px auto;background:#101722;image-rendering:pixelated}.exports{display:flex;gap:10px;margin-top:23px}.exports button{flex:1}.lower{margin-top:20px;display:flex;gap:20px;align-items:center}.lower .description{flex:1}.lower h2{margin-bottom:7px}.attach{flex:1;min-width:0}.attach .row{margin-top:12px}.filename{font-size:12px;overflow-wrap:anywhere;margin-top:9px;color:#627188}.message{min-height:24px;margin-top:14px;font-size:13px;color:#556982}.message.error{color:#c43434}details{margin-top:24px;color:#69758a;font-size:12px;line-height:1.8}summary{cursor:pointer}.footer{margin:24px 0;font-size:12px;color:#8290a2}a{color:var(--blue)}[hidden]{display:none!important}@media(max-width:700px){main{margin:24px auto;padding:0 15px}.workspace{grid-template-columns:1fr}.lower{display:block}.attach{margin-top:20px}.badge{display:none}.panel{padding:19px}h1{font-size:22px}}button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #9dc5ff;outline-offset:2px}
+</style>
+<main>
+<header><div class="mark">A7</div><div><h1>A7Look 图标生成器</h1><p>制作随外观文件携带的小图案。</p></div><span class="badge">离线 · 无需安装</span></header>
+<section class="workspace">
+<div class="panel">
+ <div class="tabs" role="tablist" aria-label="图标来源"><button id="textTab" role="tab" aria-selected="true" aria-controls="textPanel">文字缩写</button><button id="imageTab" role="tab" aria-selected="false" aria-controls="imagePanel">导入 PNG</button></div>
+ <div id="textPanel" role="tabpanel" aria-labelledby="textTab">
+  <div class="field"><label for="text">缩写</label><input id="text" type="text" value="NC" autocomplete="off" spellcheck="false"><p class="hint">1–4 个字母、数字或汉字，也支持 + 和 −（输入时用 -）。</p></div>
+  <div class="field"><label for="font">字体</label><select id="font"><option value="Arial, sans-serif">Arial · 紧凑无衬线</option><option value="'Microsoft YaHei','PingFang SC',sans-serif">系统黑体 · 适合中文</option><option value="Consolas,monospace">等宽 · 适合数字</option></select></div>
+ </div>
+ <div id="imagePanel" role="tabpanel" aria-labelledby="imageTab" hidden>
+  <div class="field"><label for="imageFile">选择 PNG 图片</label><input id="imageFile" type="file" accept="image/png,.png"><p class="hint">保留比例，居中缩放到 26×19。建议用透明底图案，不要带槽号和相机边框。</p></div>
+  <div class="field"><label for="imageMode">如何提取图案</label><select id="imageMode"><option value="auto">自动 · 有透明度时使用透明度</option><option value="light">亮度 · 白色显示，黑色留空</option><option value="dark">反相亮度 · 黑色显示，白色留空</option></select></div>
+ </div>
+ <div class="field"><div class="row"><label for="scale">图案大小</label><output id="scaleValue">90%</output></div><input class="range" id="scale" type="range" min="35" max="100" value="90"></div>
+ <div><div class="row"><label for="offset">垂直微调</label><output id="offsetValue">0 px</output></div><input class="range" id="offset" type="range" min="-3" max="3" step="0.25" value="0"></div>
+ <p id="message" class="message" role="status" aria-live="polite"></p>
+</div>
+<div class="panel">
+ <h2>图案预览</h2><div class="preview"><canvas id="large" width="26" height="19" aria-label="八倍放大预览"></canvas></div>
+ <div class="previews"><div class="mini">实际尺寸<canvas id="actual" width="26" height="19" aria-label="26乘19实际尺寸"></canvas>26 × 19</div><div class="mini">较小显示参考<canvas id="small" width="22" height="16" aria-label="22乘16参考"></canvas>22 × 16</div></div>
+ <div class="exports"><button id="exportPng" class="primary">导出 PNG</button><button id="exportJson">导出图标 JSON</button></div><p class="hint">导出的是图案本身。相机边框、选中态与各方向显示由写入器处理。</p>
+</div>
+</section>
+<section class="panel lower">
+ <div class="description"><h2>放进现有 A7Look</h2><p>选择已经生成的外观文件，将当前图案作为新图标另存。颜色参数、名称和配套参考保持原值。</p></div>
+ <div class="attach"><label for="lookFile">选择 .a7look 文件</label><input id="lookFile" type="file" accept=".a7look,application/json"><div id="lookName" class="filename">尚未选择</div><div class="row"><button id="exportLook" class="primary" disabled>另存带图标的 A7Look</button></div></div>
+</section>
+<details><summary>格式与使用说明</summary><p>PNG 为 26×19、8 位单通道灰度遮罩：0 表示不显示，255 表示完全显示，灰色表示边缘过渡。JSON 是可直接放进 A7Look 根层 menu_icon 的对象，schema 为 a7c2-menu-icon/1。图案不能全空。较小显示参考由浏览器缩放，实际写入器的采样可能略有差异。</p><p>所有操作仅处理本机选择的文件，不上传，也不连接相机。修改图标不会重新拟合外观，不会给文件添加短 id。另存只替换 menu_icon，JSON 的缩进或数字文本格式可能改变；其余解析后的字段值保持不变。</p></details>
+<p class="footer">A7Look 创作工具 · 文件可直接分享，双击后用浏览器打开。</p>
+</main>
+<script>
+'use strict';
+const $=id=>document.getElementById(id), W=26,H=19;
+let mode='text',picture=null,pictureName='',look=null,lookFilename='',pixels=new Uint8Array(W*H),valid=false;
+const canvas=document.createElement('canvas');canvas.width=104;canvas.height=76;
+const ctx=canvas.getContext('2d',{willReadFrequently:true});
+function status(text,error=false){$('message').textContent=text;$('message').classList.toggle('error',error);}
+function enable(){for(const id of ['exportPng','exportJson'])$(id).disabled=!valid;$('exportLook').disabled=!valid||!look;}
+function paint(){for(const id of ['large','actual','small']){const c=$(id),g=c.getContext('2d');const mask=document.createElement('canvas');mask.width=W;mask.height=H;const m=mask.getContext('2d'),d=m.createImageData(W,H);for(let i=0;i<pixels.length;i++){d.data[i*4]=d.data[i*4+1]=d.data[i*4+2]=255;d.data[i*4+3]=pixels[i];}m.putImageData(d,0,0);g.clearRect(0,0,c.width,c.height);g.imageSmoothingEnabled=id==='small';g.drawImage(mask,0,0,c.width,c.height);}}
+function render(){
+ valid=false;pixels=new Uint8Array(W*H);enable();ctx.clearRect(0,0,104,76);
+ const scale=+$('scale').value/100,offset=+$('offset').value*4;
+ $('scaleValue').textContent=$('scale').value+'%';$('offsetValue').textContent=$('offset').value+' px';
+ try{
+  if(mode==='text'){
+   const text=$('text').value;
+   if(!/^[\p{L}\p{N}+-]{1,4}$/u.test(text))throw Error('请输入 1–4 个字母、数字或汉字（也可用 + 或 -）。');
+   ctx.font='700 64px '+$('font').value;const metrics=ctx.measureText(text);
+   const width=metrics.actualBoundingBoxLeft+metrics.actualBoundingBoxRight||metrics.width;
+   const height=metrics.actualBoundingBoxAscent+metrics.actualBoundingBoxDescent||64;
+   const ratio=Math.min(96/width,64/height)*scale;
+   ctx.save();ctx.translate(52,38+offset);ctx.scale(ratio,ratio);ctx.fillStyle='white';ctx.fillText(text,(metrics.actualBoundingBoxLeft-metrics.actualBoundingBoxRight)/2,(metrics.actualBoundingBoxAscent-metrics.actualBoundingBoxDescent)/2);ctx.restore();
+  }else{
+   if(!picture)throw Error('请选择一张 PNG 图案。');
+   const ratio=Math.min(104/picture.width,76/picture.height)*scale;
+   ctx.drawImage(picture,(104-picture.width*ratio)/2,(76-picture.height*ratio)/2+offset,picture.width*ratio,picture.height*ratio);
+   const data=ctx.getImageData(0,0,104,76),rgba=data.data,kind=$('imageMode').value;
+   let hasAlpha=false;if(kind==='auto'){const s=document.createElement('canvas');s.width=picture.width;s.height=picture.height;const g=s.getContext('2d',{willReadFrequently:true});g.drawImage(picture,0,0);const original=g.getImageData(0,0,s.width,s.height).data;for(let i=3;i<original.length;i+=4)if(original[i]!==255){hasAlpha=true;break;}}
+   for(let i=0;i<rgba.length;i+=4){const l=Math.round(.299*rgba[i]+.587*rgba[i+1]+.114*rgba[i+2]);const a=rgba[i+3],value=hasAlpha?a:Math.round((kind==='dark'?255-l:l)*a/255);rgba[i]=rgba[i+1]=rgba[i+2]=255;rgba[i+3]=value;}
+   ctx.putImageData(data,0,0);
+  }
+  const down=document.createElement('canvas');down.width=W;down.height=H;const g=down.getContext('2d',{willReadFrequently:true});g.drawImage(canvas,0,0,W,H);const data=g.getImageData(0,0,W,H).data;for(let i=0;i<pixels.length;i++)pixels[i]=data[4*i+3];
+  if(!pixels.some(n=>n>0))throw Error('图案为空，请调整文字、图片或提取方式。');
+  valid=true;status('已生成 · 26 × 19 灰度图案');
+ }catch(e){status(e.message,true);}
+ paint();enable();
+}
+function tab(value){mode=value;$('textPanel').hidden=value!=='text';$('imagePanel').hidden=value!=='image';$('textTab').setAttribute('aria-selected',value==='text');$('imageTab').setAttribute('aria-selected',value==='image');render();}
+function concat(...parts){const out=new Uint8Array(parts.reduce((a,p)=>a+p.length,0));let n=0;for(const p of parts){out.set(p,n);n+=p.length;}return out;}
+function u32(x){return new Uint8Array([(x>>>24)&255,(x>>>16)&255,(x>>>8)&255,x&255]);}
+// These checksums are mandatory PNG/zlib encoding fields, not A7Look checks
+// or firmware verification. No checksum is added to the A7Look document.
+function pngChunk(type,data){const name=new TextEncoder().encode(type),body=concat(name,data);let crc=0xffffffff;for(const b of body){crc^=b;for(let j=0;j<8;j++)crc=(crc>>>1)^((crc&1)?0xedb88320:0);}return concat(u32(data.length),body,u32((crc^0xffffffff)>>>0));}
+function pngBytes(){
+ if(!valid)throw Error('请先生成有效图案。');
+ const raw=new Uint8Array((W+1)*H);for(let y=0;y<H;y++)raw.set(pixels.subarray(y*W,(y+1)*W),y*(W+1)+1);
+ // A single uncompressed DEFLATE block keeps the entire 8-bit grayscale PNG
+ // deterministic and tiny without libraries or an online conversion service.
+ let a=1,b=0;for(const x of raw){a=(a+x)%65521;b=(b+a)%65521;}
+ const n=raw.length,z=concat(new Uint8Array([0x78,0x01,1,n&255,n>>>8,(~n)&255,((~n)>>>8)&255]),raw,u32(((b<<16)|a)>>>0));
+ return concat(new Uint8Array([137,80,78,71,13,10,26,10]),pngChunk('IHDR',concat(u32(W),u32(H),new Uint8Array([8,0,0,0,0]))),pngChunk('IDAT',z),pngChunk('IEND',new Uint8Array()));
+}
+function iconObject(){const bytes=pngBytes();let binary='';for(const b of bytes)binary+=String.fromCharCode(b);const label=mode==='text'?$('text').value:Array.from(pictureName.replace(/\.png$/i,'')).slice(0,32).join('').replace(/[\x00-\x1f]/g,'');return {schema:'a7c2-menu-icon/1',png_base64:btoa(binary),...(label?{label}:{})};}
+function stem(){const value=mode==='text'?$('text').value:pictureName.replace(/\.png$/i,'');return (value||'icon').replace(/[<>:"/\\|?*\x00-\x1f]/g,'_');}
+function download(data,type,name){const url=URL.createObjectURL(new Blob([data],{type}));const a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),10000);}
+function action(fn){try{fn();}catch(e){status(e.message,true);}}
+$('textTab').onclick=()=>tab('text');$('imageTab').onclick=()=>tab('image');
+for(const id of ['text','font','scale','offset','imageMode'])$(id).addEventListener('input',render);
+$('imageFile').addEventListener('change',async()=>{
+ const file=$('imageFile').files[0];if(!file)return;picture=null;pictureName='';valid=false;enable();
+ try{if(file.size>16*1024*1024)throw Error('请选择小于 16 MiB 的 PNG。');const sig=new Uint8Array(await file.slice(0,24).arrayBuffer());if(sig.length<24||![137,80,78,71,13,10,26,10].every((v,i)=>sig[i]===v))throw Error('请选择 PNG 格式文件。');const view=new DataView(sig.buffer);if(view.getUint32(16)>4096||view.getUint32(20)>4096)throw Error('请先将图片缩小到 4096×4096 以内。');const image=await createImageBitmap(file);picture=image;pictureName=file.name;mode='image';tab('image');}catch(e){pixels=new Uint8Array(W*H);paint();status(e.message,true);enable();}
+});
+$('lookFile').addEventListener('change',async()=>{
+ look=null;lookFilename='';$('lookName').textContent='尚未选择';enable();const file=$('lookFile').files[0];if(!file)return;
+ try{if(file.size>64*1024*1024)throw Error('外观文件超过 64 MiB。');const d=JSON.parse((await file.text()).replace(/^\uFEFF/,''));if(!d||Array.isArray(d)||!['a7c2-creative-look/1','a7c2-creative-look/2'].includes(d.schema)||d.target?.model!=='ILCE-7CM2'||d.target?.firmware!=='2.01'||d.base!=='ST'||d.table_format!=='native-5x9x9-s7-planar'||typeof d.name!=='string'||!d.table_base64||d.schema.endsWith('/2')&&!d.edit_native)throw Error('请选择现有 C2 .a7look 文件。');look=d;lookFilename=file.name;$('lookName').textContent=d.name+' · '+file.name;enable();status('外观已载入，另存时只替换图标。');}catch(e){status(e.message,true);}
+});
+$('exportPng').onclick=()=>action(()=>download(pngBytes(),'image/png',stem()+'-26x19.png'));
+$('exportJson').onclick=()=>action(()=>download(JSON.stringify(iconObject(),null,2)+'\n','application/json',stem()+'-menu-icon.json'));
+$('exportLook').onclick=()=>action(()=>{if(!look)throw Error('请先选择 A7Look。');const result={...look,menu_icon:iconObject()};download(JSON.stringify(result,null,2)+'\n','application/json',lookFilename.replace(/\.a7look$/i,'')+'-icon.a7look');});
+document.fonts.ready.then(render);
+</script>
+</html>

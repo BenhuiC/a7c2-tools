@@ -1,7 +1,8 @@
-"""C2 integration of Hearts-Ace colorlab 06c3557 numerical fitting.
+"""C2 native fitting with the provided raw-differential nonlinear operator.
 
-The response is calibrated on C2 measurements. Only original native integer
-parameters and a packed grid are exported; no PC model enters the firmware.
+The author's R5 response has been compared with existing C2 probe records;
+this is not a newly calibrated C2 model or independent-scene acceptance.
+Only native integers and a packed grid are exported, never the PC operator.
 """
 from pathlib import Path
 import json
@@ -10,11 +11,11 @@ import sys
 import types
 
 ROOT=Path(__file__).resolve().parent
-COMMIT='06c35577255eddef641c695d179b0e6f699ffe62'
-IDENTITY=dict(schema='r5-measured-grid-response/1',preset='c2-hybrid-20261110',model='ILCE-7CM2')
+COMMIT='author-portable-mac-20261122-raw-differential-20261118-C2-adapter'
+IDENTITY=dict(schema='r5-measured-grid-response/1',preset='provided-raw-differential-20261118',model='ILCE-7CM2')
 
 def initialize(threads=3,calibration=None):
-    """Select CPU explicitly; keep upstream objectives and integer acceptance."""
+    """Select CPU/CUDA explicitly; keep native objectives and integer acceptance."""
     for folder in (ROOT,ROOT/'upstream/R5ColorLab/amd',ROOT/'upstream/R5ColorLab/scripts'):
         if str(folder) not in sys.path:sys.path.insert(0,str(folder))
     device=os.environ.get('A7LOOK_FIT_DEVICE','cpu')
@@ -54,13 +55,10 @@ def initialize(threads=3,calibration=None):
     if 'callback'not in inspect.signature(original_ls).parameters:
         def least_squares(*args,callback=None,workers=None,**kwargs):return original_ls(*args,**kwargs)
         scipy.optimize.least_squares=least_squares
-    from hybrid_response import HybridModel
+    from latent_response import LatentModel
     value=json.loads(Path(calibration or ROOT/'data/response.json').read_text(encoding='utf-8'))
-    if value.get('response_basis')!='rgb-hue3-nonlinear/1' or value.get('source',{}).get('model')!='ILCE-7CM2':
-        raise ValueError('Select a C2 Hybrid response JSON; R5 camera coefficients cannot be used')
-    model=HybridModel(value,None,identity=IDENTITY)
-    model.value['metadata']=dict(model='ILCE-7CM2',physical_scope='C2 historical physical grid probes')
-    model.base.value['metadata']=model.value['metadata'].copy()
+    model=LatentModel(value,None,identity=IDENTITY)
+    model.value['metadata']=dict(model='ILCE-7CM2',physical_scope='Provided R5 operator; C2 existing-probe comparison only')
     measured=types.ModuleType('measured_response')
     measured.SCHEMA=IDENTITY['schema']
     measured.is_measured=lambda v:isinstance(v,dict)and v.get('schema')==IDENTITY['schema']
@@ -133,7 +131,7 @@ def preflight():
     x=tools.tensor(rgb).requires_grad_(True)
     actual=paired_tensor(tools,x,tools.tensor(table),IDENTITY)
     error=float(np.max(np.abs(actual.detach().numpy()-model.predict_cpu(rgb,table))))
-    if error>1e-12:raise ValueError('C2 Hybrid CPU/tensor inference differs')
+    if error>1e-12:raise ValueError('Nonlinear C2 CPU/tensor inference differs')
     actual.sum().backward()
     if not torch.isfinite(x.grad).all():raise ValueError('Nonfinite C2 response gradient')
     np.testing.assert_array_equal(model.predict_cpu(rgb,np.zeros((405,3))),rgb)
@@ -194,7 +192,7 @@ def fit(target,output,*,evaluations=2000,starts=12,threads=3,previous=None,calib
         sys.argv=['c2-r5-fit',str(pairs),'--capture',str(capture),'--context','4','--gamut','0',
             '--output',str(output/'fit'),'--evaluations',str(evaluations),'--pc-compensation',
             '--search-options',json.dumps(options),'--pc-options',json.dumps(dict(curve_mode='tone-tint',grid_enabled=True,response=IDENTITY)),
-            '--target-description','C2 source-bound target; latest upstream Hybrid; no device I/O']
+            '--target-description','C2 source-bound target; author portable 20261122 nonlinear response; no device I/O']
         try:fn.main()
         finally:sys.argv=argv
     recipe=json.loads((output/'fit/recipe.json').read_text(encoding='utf-8'))
@@ -267,7 +265,7 @@ def fit(target,output,*,evaluations=2000,starts=12,threads=3,previous=None,calib
         rounds.append(dict(round=index,native=audit,grid=ga,rounding=ra,validation=value,selected=chosen['label']))
         save(output/('stack-round-%d.json'%index),rounds[-1])
     prediction=model.predict_cpu(chosen['base'],chosen['grid'])
-    report=dict(upstream_commit=COMMIT,algorithm='C2 Hybrid native12-grid5-stack3',execution_device=device,camera_io=False,
+    report=dict(upstream_commit=COMMIT,algorithm='C2 native12-grid5-stack3 / latest latent response adapter',execution_device=device,camera_io=False,
         selected=chosen['label'],selected_validation=chosen['validation'],stack_started_from=stack_started_from,budget=dict(evaluations=evaluations,starts=starts),
         grid_rounds=grid_rounds,stack_rounds=rounds,
         metrics={s:metrics(target[split==s],prediction[split==s])for s in ('train','valid','test')},

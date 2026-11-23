@@ -1,6 +1,6 @@
 name: Publish draft release
 # Push build/publish-<tag> to publish the draft created by release.yml, after
-# checking that all three expected assets are attached.
+# checking that both expected desktop assets are attached.
 on:
   push:
     branches: ['build/publish-*']
@@ -25,7 +25,7 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
             --jq ".[] | select(.tag_name == \"$tag\") | .assets[].name" > assets.txt
           cat assets.txt
-          for name in A7C2Tools-Windows-x64.zip A7C2Tools-macOS-arm64.dmg "A7C2-Looks-and-DCP-${tag#v}.zip"; do
+          for name in A7C2Tools-Windows-x64.zip A7C2Tools-macOS-arm64.dmg; do
             grep -qx "$name" assets.txt || { echo "Missing asset: $name"; exit 1; }
           done
           gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --latest

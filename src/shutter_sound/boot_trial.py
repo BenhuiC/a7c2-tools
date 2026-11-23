@@ -128,7 +128,8 @@ def current_probe(ap,output,zig=None):
     rows=[]
     for i,(at,old,new) in enumerate(boot_sound.current_windows(ap)):
         actual=ap[at:at+len(old)]
-        if actual not in (old,new):raise ValueError('Current sound-hook bytes conflict at '+hex(at))
+        import targeted_sound
+        if actual not in targeted_sound.allowed(at,old,new):raise ValueError('Current sound-hook bytes conflict at '+hex(at))
         lines.append('static const u8 guard_'+str(i)+'[]={'+','.join(map(str,actual))+'};')
         rows.append('{'+str(at)+'UL,'+str(len(actual))+',guard_'+str(i)+'}')
     lines+=['static const struct ExtraGuard extra_guards[]={'+','.join(rows)+'};',
@@ -254,8 +255,7 @@ def install(root, backup_copy, native_job, audio_job, payload, battery, zig=None
     state = {'schema': 'a7c2-native-boot-sound-job/1', 'phase': 'preparing',
              'identity': original['identity'], 'camera_firmware_written': False,
              'power_confirmation': power, 'journal': [],
-             'owner_audio_job': str(Path(audio_job).resolve()) if audio_job else None,
-             'owner_listening_confirmed':bool(evidence.get('owner_audio_correct')),
+             'audio_job': str(Path(audio_job).resolve()) if audio_job else None,
              'original_file_absence_required': list(PATHS)}
     trial.save(root, state)
     try:
@@ -322,7 +322,7 @@ def install(root, backup_copy, native_job, audio_job, payload, battery, zig=None
 def restore(root, zig=None, camera_factory=trial.factory):
     root = Path(root)
     state = json.loads((root / 'job.private.json').read_text(encoding='utf-8'))
-    if state['phase'] not in ('installed_cold_test_pending', 'loaded_owner_confirmation_pending', 'owner_confirmed_working'):
+    if state['phase'] not in ('installed_cold_test_pending', 'loaded', 'loaded_owner_confirmation_pending', 'owner_confirmed_working'):
         raise ValueError('Inspect the original job before restoration; unknown operations are not repeated')
     components = state['components']
     state['phase'] = 'restoring_boot_hook_first'
@@ -357,10 +357,10 @@ def restore(root, zig=None, camera_factory=trial.factory):
     return state
 
 
-def verify_loaded(root, heard_correct=False, camera_factory=trial.factory):
+def verify_loaded(root, camera_factory=trial.factory):
     root = Path(root)
     state = json.loads((root / 'job.private.json').read_text(encoding='utf-8'))
-    if state['phase'] not in ('installed_cold_test_pending', 'loaded_owner_confirmation_pending', 'owner_confirmed_working'):
+    if state['phase'] not in ('installed_cold_test_pending', 'loaded', 'loaded_owner_confirmation_pending', 'owner_confirmed_working'):
         raise ValueError('Use a completed installation job after a cold power cycle')
     components = state['components']
     with camera_factory(state['identity']) as camera:
@@ -376,8 +376,9 @@ def verify_loaded(root, heard_correct=False, camera_factory=trial.factory):
                 raise ValueError('Installed private audio files differ')
         state['loaded_code_and_owned_custom_descriptor_verified'] = True
         state['loaded_sound'] = selected
-        state['owner_persistent_audio_correct'] = bool(heard_correct)
-        state['phase'] = 'owner_confirmed_working' if heard_correct else 'loaded_owner_confirmation_pending'
+        state.pop('owner_persistent_audio_correct',None)
+        state.pop('owner_listening_confirmed',None)
+        state['phase'] = 'loaded'
         trial.save(root, state)
     return state
 
@@ -389,7 +390,7 @@ def main(argv=None):
     a.add_argument('--job', type=Path, required=True)
     a.add_argument('--backup-copy', type=Path, required=True)
     a.add_argument('--native-sound-job', type=Path, required=True)
-    a.add_argument('--confirmed-audio-job', type=Path, required=True)
+    a.add_argument('--audio-job', type=Path)
     a.add_argument('--native-bin', type=Path, required=True)
     a.add_argument('--battery-percent', type=int, required=True)
     a.add_argument('--zig')
@@ -400,15 +401,14 @@ def main(argv=None):
     s.add_argument('--job', type=Path, required=True)
     v = sub.add_parser('verify')
     v.add_argument('--job', type=Path, required=True)
-    v.add_argument('--heard-correct', action='store_true', help='Owner confirms correct content, pitch/speed and normal shooting/playback after cold boot')
     args = p.parse_args(argv)
     if args.command == 'install':
         result = install(args.job, args.backup_copy, args.native_sound_job,
-            args.confirmed_audio_job, args.native_bin.read_bytes(), args.battery_percent, args.zig)
+            args.audio_job, args.native_bin.read_bytes(), args.battery_percent, args.zig)
     elif args.command == 'restore':
         result = restore(args.job, args.zig)
     elif args.command == 'verify':
-        result = verify_loaded(args.job, args.heard_correct)
+        result = verify_loaded(args.job)
     else:
         result = json.loads((args.job / 'job.private.json').read_text(encoding='utf-8'))
     print(json.dumps({key: result.get(key) for key in

@@ -21,7 +21,7 @@ def pc_options(value=None):
 
 
 def search_options(value=None):
-    defaults=dict(starts=12, adaptive_rounds=8, perceptual_weight=.35, quantization_sweeps=3, parameter_smoothing=0, output_continuity=0, target_neighborhood=0, hue_direction_strength=0, target_polish_rounds=0, postfit_deburr=True, gamma_monotone_concave=True, gamma_global_correction=True, gamma_color_recovery=True, native_strict_stopping=True, gamma_color_rounds=3, primary_tonal_weight=1.0, hue24_tonal_weight=1.0)
+    defaults=dict(starts=12, adaptive_rounds=8, perceptual_weight=.35, quantization_sweeps=3, parameter_smoothing=0, output_continuity=0, target_neighborhood=0, hue_direction_strength=0, target_polish_rounds=0, postfit_deburr=False, gamma_monotone_concave=True, gamma_global_correction=True, gamma_color_recovery=True, native_strict_stopping=True, gamma_color_rounds=3, primary_tonal_weight=1.0, hue24_tonal_weight=1.0)
     if value is None:return defaults
     if not isinstance(value,dict) or set(value)-set(defaults):raise ValueError('未知优化器选项')
     result={**defaults,**value}

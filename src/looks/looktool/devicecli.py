@@ -65,12 +65,11 @@ def main(argv):
             power=parser.add_mutually_exclusive_group(required=True)
             power.add_argument('--battery-percent',type=int);power.add_argument('--power-confirmed',action='store_true')
         elif action=='resume':parser.add_argument('--battery-percent',type=int,required=True)
-        if action=='verify':parser.add_argument('--accept-photos',action='store_true',help='Record your actual successful preview/new-photo/playback checks')
         args=parser.parse_args(argv[1:]);job=Job(args.job)
         if action=='install':
             options={'power_confirmed':True} if args.power_confirmed else {}
             state=job.install(args.battery_percent,**options)
-        elif action=='verify':state=job.verify(args.accept_photos)
+        elif action=='verify':state=job.verify()
         elif action=='recover':state=job.recover()
         elif action=='resume':state=job.resume(args.battery_percent)
         else:raise ValueError('Unknown device operation')

@@ -3,14 +3,13 @@ TITLE = 'LUT / DCP 格式与色彩空间'
 TEXT = """相机写入页只选 .a7look，不直接写入 .cube 或 .dcp。生成工具只转换电脑文件，不连接相机。
 
 1. 桌面生成器接受什么 CUBE？
-输入：Sony ST 标准创意外观、sRGB 编码的 RGB；输出：sRGB。
-不是 S-Log3、S-Log2、HLG、S-Gamut3.Cine、DaVinci Wide Gamut 或 ACES。普通 Rec.709 视频 LUT 也不自动等同于这个输入；还要确认传递曲线和色域。
-只有标注“适用于 Sony ST / sRGB 照片”的 LUT 才可直接用。文件扩展名 .cube 不包含可靠的色彩空间声明，程序无法自动判断。
+可选输入曲线与色域：sRGB、Rec.709、Linear、P3、Adobe RGB、S-Log3／S-Gamut3.Cine、S-Log2／S-Gamut、Canon Log2／3、N-Log、V-Log、F-Log／2、ARRI LogC3／4、D-Log等。输出可选普通SDR、PQ或HLG。
+文件名／TITLE仅提供建议，仍需按作者说明确认输入和输出。未识别时保留sRGB默认值，不通过灰阶反推宣称识别出色域。DaVinci Wide Gamut、ACES或特定版本可使用自备bridge。
+M4兼容项复用17点近似表，不等于原厂完整色彩变换。参考白按PQ100nit、HLG75%码值处理，转到SDR后超范围分量裁切，不承诺保留HDR高光。
 
 2. 我只有 S-Log3 LUT 怎么办？
-例如 S-Log3 / S-Gamut3.Cine → Rec.709 的 LUT，不能在当前桌面生成器里直接选用。直接套在 ST 图片上会出现反差、曝光或颜色错误，改扩展名或改文件头不能解决。
-请在调色软件中重新导出完整的“Sony ST / sRGB 输入 → 目标风格 → sRGB 输出”的 3D CUBE，包含需要的输入和输出变换。不能只把导出标签改成 sRGB。
-高级命令行支持显式输入空间与 ST→该空间的桥接 CUBE；目标 LUT 的输出仍须为 sRGB。当前 GUI 不提供 Log 桥接选项；桥接也不保证重建 Sony 原生 Log 处理。
+选择输入“S-Log3 / S-Gamut3.Cine”、输出“Rec.709”，再进行转换；若文件要求S-Gamut3而不是Cine，请选择对应项。不是所有标有709的LUT都采用sRGB曲线。
+变换以现有ST／sRGB参考为起点，生成照片外观近似；不能恢复已被ST显示链裁掉的原始场景高光，也不代表相机开始使用视频Log。更精确的拍摄条件可自备ST→目标空间的bridge CUBE。
 
 3. CUBE 文件结构
 纯文本独立 3D LUT，LUT_3D_SIZE N；N 支持 2–129，常见 17 / 33 / 65，建议 33。
@@ -19,7 +18,7 @@ TEXT = """相机写入页只选 .a7look，不直接写入 .cube 或 .dcp。生�
 
 4. DCP 是什么？
 .dcp 是 Adobe 相机配置文件，不是 S-Log3 视频 LUT。生成器直接离线解析 DCP 的 LookTable／色调曲线并拟合，无需 Lightroom、显影插件、renderer 配置或联网。
-DCP 通过内置共享 ST 映射进行近似拟合，不复制来源机型的传感器矩阵或 HueSat 校准，也不声称完整复现 Adobe 显影。单独 CUBE 不会自动变成 Lightroom RAW 的 DCP 配置。
+DCP通过内置共享ST映射进行近似拟合，不复制其他机型传感器校准。CUBE会使用同一输入／输出变换制作Sony专用配套DCP；不声称逐像素复现Adobe显影或原LUT。
 
 5. 最后怎么写？
 生成新的 .a7look → 添加操作项 → 选择槽位和“写入 A7Look” → 选择文件并填写机内名称 → 查看并应用。多个槽位可一起写，没列出的槽位保持原样。

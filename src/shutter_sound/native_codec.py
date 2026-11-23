@@ -73,16 +73,18 @@ def write_wav(path, samples, rate):
         w.writeframes(data.tobytes())
 
 
-def candidate(wav_path, *, target_rate=24000, peak=0.12):
+def candidate(wav_path, *, target_rate=24000, peak=0.12,clip=False):
     from scipy.signal import resample_poly
     import numpy as np
     source, source_rate = read_wav(wav_path)
-    if target_rate <= 0 or not 0 < peak <= 32512 / 32767 or not source or not any(source):
+    if target_rate <= 0 or not math.isfinite(peak) or peak<=0 or (not clip and peak>32512/32767) or not source or not any(source):
         raise ValueError('Use a positive rate, non-silent audio and PCM headroom within +/-32512')
     divisor = math.gcd(source_rate, target_rate)
     converted = resample_poly(np.array(source, dtype=float), target_rate // divisor, source_rate // divisor)
     gain = 32767 * peak / float(np.max(np.abs(converted)))
     samples = [round(x * gain) for x in converted]
+    clipped_samples=sum(abs(x)>32512 for x in samples)
+    if clip:samples=[max(-32512,min(32512,x))for x in samples]
     raw = encode_filter0(samples)
     restored = decode(raw)[:len(samples)]
     error = np.array(restored, dtype=float) - samples
@@ -97,7 +99,7 @@ def candidate(wav_path, *, target_rate=24000, peak=0.12):
               'filter1_not_used': True, 'peak_fraction': max(map(abs, samples)) / 32767,
               'software_roundtrip_max_error': float(np.max(np.abs(error))),
               'software_roundtrip_snr_db': 10 * math.log10(signal / noise) if noise else None,
-              'software_roundtrip_not_hardware_proof': True}
+              'software_roundtrip_not_hardware_proof': True,'clipped_samples':clipped_samples}
     if any(raw[at] & 16 for at in range(0, len(raw), 32)):
         raise ValueError('Unexpected predictor in filter0 candidate')
     return raw, restored, report

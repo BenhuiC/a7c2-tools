@@ -1,6 +1,5 @@
 """Fixed camera command client and offline build. No device access on import."""
 import json
-import os
 from pathlib import Path
 import shlex
 import struct
@@ -21,43 +20,61 @@ LOOK_RESTART_MESSAGE = (
 def look_payload(document):
     """Encode the complete native recipe, or the bounded legacy stage packet."""
     from looktool import lookfile,photoformat
+    if not isinstance(document,dict):raise ValueError('Compiled look must contain a JSON object')
     icon = document.get('menu_icon')
-    if icon is not None:
-        # The artwork is carried in a versioned envelope, not discarded to make
-        # an old command accept a file it cannot install completely.
-        lookfile.validate(document)
-        from .iconprotocol import pack
-        color = dict(document)
-        color.pop('menu_icon')
-        return pack(look_payload(color), icon)
-    if document.get('edit_native')is not None:
-        from looktool.editrecipe import pack
-        return b'A7F2LOOK'+lookfile.validate(document)+pack(document['edit_native'])
-    table=lookfile.writer_document(document)
-    stage=document.get('native_photo')
+    color=dict(document)
+    for field in ('menu_icon','raw_profile','source_reference'):color.pop(field,None)
+    table=lookfile.writer_document(color)
+    if color.get('edit_native')is not None:
+        from looktool.editrecipe import wire_pack
+        packet=b'A7F3LOOK'+table+wire_pack(color['edit_native'],validated=True)
+        if icon is not None:
+            from .iconprotocol import pack
+            packet=pack(packet,icon)
+        return packet
+    stage=color.get('native_photo')
     values=[0]*54
     if stage:
         basis=stage['runtime_basis']
         values=list(basis['tone_q10'])
         values += [n for row in basis['matrix_planes'] for n in photoformat.expand_matrix(row,(0,0,0))]
         values += [n for row in basis['chroma_planes'] for n in row]
-    return table+bytes((stage is not None,))+struct.pack('<54h',*values)
+    packet=table+bytes((stage is not None,))+struct.pack('<54h',*values)
+    if icon is not None:
+        from .iconprotocol import pack
+        packet=pack(packet,icon)
+    return packet
 
 
 def prepare_look(source,name=None):
     """Read the user's .a7look directly; packed bytes stay in memory."""
     from looktool import lookfile
-    document=lookfile.read(source)
+    document=json.loads(Path(source).read_text(encoding='utf-8-sig'))
     return name or document['name'],look_payload(document)
 
 
-def apply_look(connection,slot,source,name=None):
-    title,payload=prepare_look(source,name)
+def preflight(connection,*,look=False):
+    """One capability/status response; only old APIs need a task fallback."""
+    info=call(connection,'info')
+    if 'state' not in info:info.update(call(connection,'task'))
+    allowed=('idle','active','rolled_back','pending_reload') if look else ('idle','active','rolled_back')
+    if info.get('state') not in allowed:
+        raise ValueError('相机任务尚未结束：'+str(info.get('state'))+'；不会重复写入。')
+    return info
+
+
+def require_look(info,payload):
     from .iconprotocol import MAGIC
-    if payload.startswith(MAGIC):
-        capabilities = call(connection, 'info')
-        if capabilities.get('menu_icons_protocol') != 1:
-            raise ValueError('机内外观 API 尚未支持图标；没有发送颜色、名称或图标写入')
+    icon=payload.startswith(MAGIC);offset=16 if icon else 0
+    if icon and info.get('menu_icons_protocol')!=2:
+        raise ValueError('请先更新机内 API；未发送精简图标数据。')
+    if payload[offset:offset+8]==b'A7F3LOOK' and (not info.get('native_photo') or info.get('native_look_protocol')!=2):
+        raise ValueError('请先更新机内 API；未发送精简外观数据。')
+
+
+def apply_look(connection,slot,source,name=None,*,info=None):
+    title,payload=prepare_look(source,name)
+    require_look(preflight(connection,look=True) if info is None else info,payload)
     return call(connection,'look',slot,title,payload=payload)
 
 
@@ -77,15 +94,15 @@ def call(connection,operation,*arguments,payload=None):
 
 
 def compile_native(source,output,*,zig=None,include=None):
-    from looktool.nativebuild import zig_command
+    from looktool.nativebuild import zig_command,zig_environment,zig_output_path
     output=Path(output);output.parent.mkdir(parents=True,exist_ok=True)
-    env=os.environ.copy();cache=Path(os.environ.get('A7C2_ZIG_CACHE',output.parent/'zig-cache'))
-    env.update(ZIG_GLOBAL_CACHE_DIR=str(cache/'global'),ZIG_LOCAL_CACHE_DIR=str(cache/'local'))
-    command=zig_command(zig)+['cc','-target','aarch64-linux-musl','-Os','-s','-static']
-    if include:command+=['-I',str(Path(include).parent),'-DCAMERA_CONFIG="'+Path(include).name+'"']
-    command += [str(source),'-o',str(output)]
-    done=subprocess.run(command,env=env,capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=180)
-    if done.returncode:raise ValueError('Camera command compilation failed: '+done.stderr[-2500:])
+    env=zig_environment()
+    with zig_output_path(output,env) as local:
+        command=zig_command(zig)+['cc','-target','aarch64-linux-musl','-Os','-s','-static']
+        if include:command+=['-I',str(Path(include).parent),'-DCAMERA_CONFIG="'+Path(include).name+'"']
+        command += [str(source),'-o',str(local)]
+        done=subprocess.run(command,env=env,capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=180)
+        if done.returncode:raise ValueError('Camera command compilation failed: '+done.stderr[-2500:])
     return output
 
 
@@ -93,7 +110,7 @@ def configuration(current):
     """Compile known target locations into the camera side, never the client."""
     from looktool import device_layout,nameworker,six,photobuild,photoio,photofull,fixedbank,fixedbankcode,fixedregion
     sys.path.insert(0,str(ROOT/'src/shutter_sound'))
-    import candidate,targeted_sound
+    import candidate,targeted_sound,boot_sound
     ap,cp=current['appFw.so'],current['cpapp-b.bin']
     identity=device_layout.structural_ap(ap)
     mask=identity['mask'];fixed=fixedbankcode.present(cp)
@@ -111,7 +128,8 @@ def configuration(current):
     rows += [(candidate.TABLE_BEFORE,candidate.CONTEXT,1),(candidate.TABLE_BEFORE,candidate.LEGACY_GATE,3),
              (candidate.TABLE_AFTER,candidate.GATE_AFTER,2),(candidate.TABLE_AFTER,candidate.GATE_ELECTRONIC,2)]
     candidate.guard(ap,cp,installed=candidate.is_enabled(cp))
-    custom=all(ap[at:at+len(after)]==after for at,_,after in targeted_sound.windows(ap))
+    custom=targeted_sound.sparse(ap) and boot_sound.installed(ap)
+    upgrades=boot_sound.UPGRADE_OFFSETS|targeted_sound.READER_UPGRADE_OFFSETS
     def guards(name,source,windows):
         return 'static const struct api_guard '+name+'[]={'+','.join(
             '{'+f'{at},{size},(const unsigned char[])'+cbytes(source[at:at+size])+'}' for at,size in windows)+'};'
@@ -129,14 +147,24 @@ def configuration(current):
         look_cp += [(row['offset'],len(bytes.fromhex(row['after']))) for row in value['hooks']]
     sound_cp=[(0x20124,48)]+[(at,len(raw)) for at,raw in candidate.CP_GUARDS]
     sound_ap=[(0x286cde8,20),(0x2885488,20)]
-    custom_ap=[(at,len(after)) for at,_,after in targeted_sound.windows(ap)] if custom else sound_ap
+    custom_ap=[(at,len(after)) for at,_,after in targeted_sound.windows(ap) if at not in upgrades] if custom else sound_ap
     lines=[f'#define API_FULL_NATIVE {int(full_photo)}',f'#define API_FIXED_BANK {int(fixed)}',
-        '#define API_MENU_ICONS 1',
+        '#define API_MENU_ICONS 2',
         f'static const unsigned slot_mask={mask},photo_available={int(photo)},sound_available=1,custom_audio_available={int(custom)};',
         f'static const unsigned cp_file_size={len(cp)},ap_file_size={len(ap)};',
         guards('look_cp_guards',cp,look_cp),guards('look_ap_guards',ap,[(0x35287f0,132)]),
         guards('sound_cp_guards',cp,sound_cp),guards('sound_ap_guards',ap,sound_ap),
         guards('custom_ap_guards',ap,custom_ap),
+        'struct sound_ap_edit {unsigned offset,size;const unsigned char *before,*after,*previous;};',
+        'static const struct sound_ap_edit sound_lifecycle_edits[]={'+','.join(
+            '{'+f'{at},{len(old)},(const unsigned char[])'+cbytes(old)+', (const unsigned char[])'+cbytes(new)+','+
+            ('(const unsigned char[])'+cbytes(targeted_sound.SHARE_PREVIOUS[at-targeted_sound.SHARE_HELPER:at-targeted_sound.SHARE_HELPER+len(new)])
+             if at in (targeted_sound.SHARE_HELPER,targeted_sound.SHARE_HELPER+64) else '0')+'}'
+            for at,old,new in ([r for r in boot_sound.expected_windows() if r[0] in boot_sound.UPGRADE_OFFSETS]+
+                               targeted_sound.upgrade_windows()))+'};',
+        f'static const unsigned sound_variant_offset={candidate.VARIANT_WINDOW[0]};',
+        'static const unsigned char sound_variant_before[]='+cbytes(candidate.VARIANT_WINDOW[1])+';',
+        'static const unsigned char sound_variant_after[]='+cbytes(candidate.VARIANT_WINDOW[2])+';',
         'static const unsigned char sound_front_before[]='+cbytes(candidate.FRONT_BEFORE)+';',
         'static const unsigned char sound_mechanical_before[]='+cbytes(candidate.MECHANICAL_BEFORE)+';',
         f'static const unsigned table_offset={six.TABLE_FILE},table_magic={six.MAGIC}U,table_layout={six.VERSION};',

@@ -5,6 +5,8 @@ from pathlib import Path
 
 
 def options(args):
+    from .firmwaresound import selection
+    selection(args)
     custom=bool(args.get('custom_looks',bool(args.get('preset_pack') or args.get('looks'))))
     if args.get('voice_cleanup') is False:
         raise ValueError('本地固件必须删除无障碍语音音频并禁用语音指南')
@@ -69,21 +71,19 @@ def resources(current,records,features,selected=()):
             files['/share/app/'+name]=changed
     if features['vertical']:
         sys.path.insert(0,str(nativebuild.ROOT/'src/vertical'))
-        from verticaltool import nativeportrait,portraitlayout,portraitgauge
+        from verticaltool import portraitlayout,portraitgauge
+        from . import portraitresources
         # Starting from official bytes: no old compensated AP layout is accepted.
         if portraitlayout.active(current['appFw.so']):raise ValueError('旧竖屏补偿不能与独立竖屏资源组合')
         for at,expected in ((portraitgauge.OFFSET,portraitgauge.BEFORE),(portraitgauge.VERTICAL_OFFSET,portraitgauge.VERTICAL_BEFORE)):
             if current['appFw.so'][at:at+len(expected)]!=expected:raise ValueError('Native portrait gauge layout differs')
-        names=[f'image_{i:02d}_32_IPSX.uxc' for i in range(3)]
-        for i,raw in enumerate(nativeportrait.targets([current['images/'+name] for name in names])):
+        for i,raw in enumerate(portraitresources.targets(icons)):
             files[f'/share/app/image_{i:02d}_23_IPSX.uxc']=raw
     elif features['custom_looks']:
         # The API updates all four icon banks even with portrait layout off.
-        sys.path.insert(0,str(nativebuild.ROOT/'src/vertical'))
-        from verticaltool import nativeportrait
-        for group in (0,1):
-            name=f'image_{group:02d}_32_IPSX.uxc'
-            files[f'/share/app/image_{group:02d}_23_IPSX.uxc']=nativeportrait.prepare(current['images/'+name],group)
+        from . import portraitresources
+        for group,raw in enumerate(portraitresources.targets(icons)[:2]):
+            files[f'/share/app/image_{group:02d}_23_IPSX.uxc']=raw
     return result,wanted,files
 
 
@@ -112,7 +112,15 @@ def compose(current,records,args):
         import boot_sound,targeted_sound
         composition.apply('sound-loader',{'appFw.so':boot_sound.patch(target['appFw.so'],targeted_sound.windows(target['appFw.so']))})
         target.update(composition.current)
+    from .firmwaresound import prepare as prepare_sound
+    sound_files,custom_sound=prepare_sound(args)
+    if custom_sound:
+        import targeted_sound
+        sound_programs,_=targeted_sound.program_plan(target['appFw.so'],target['cpapp-b.bin'],custom_sound['selection'])
+        composition.apply('custom-shutter-selection',sound_programs,replaces=('looks-and-native-sound','sound-loader'))
+        target.update(composition.current)
     programs,fields,files=resources(target,records,features,selected)
+    files.update(sound_files)
     composition.apply('voice-disable',programs);target.update(composition.current)
     for chip in (0,1):
         for key,value in fields[chip].items():
@@ -128,5 +136,5 @@ def compose(current,records,args):
         target.update(composition.current)
         device_layout.structural(target['appFw.so'],target['cpapp-b.bin'])
     return target,wanted,selected,files,dict(features=features,stages=composition.rows,
-        fixed_creative_looks=fixed,fixed_look_storage=fixed_storage,
+        fixed_creative_looks=fixed,fixed_look_storage=fixed_storage,custom_shutter_sound=custom_sound,
         menu_icon_slots=[row['slot'] for row in selected if row['document'].get('menu_icon') is not None],camera_io=False)

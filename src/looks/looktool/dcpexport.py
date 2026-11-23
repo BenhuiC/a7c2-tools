@@ -43,7 +43,7 @@ def encode(tags, endian):
 
 
 def _tone(reference):
-    for count in (65,129,257):
+    for count in (65,129,257,33,17):
         x=srgb_decode(np.linspace(0,1,count))
         target=reference(np.repeat(x[:,None],3,axis=1))
         linear=srgb_decode(target)@np.linalg.inv(prophoto_to_srgb()).T
@@ -53,7 +53,9 @@ def _tone(reference):
         y-=y[0]*np.exp(-x/.003);y+=(1-y[-1])*x**16;y[0],y[-1]=0,1
         curve=np.c_[x,y].astype('f4').astype(float)
         spline=CubicSpline(curve[:,0],curve[:,1],bc_type='natural')
-        values=spline(np.linspace(0,1,65537))
+        # Match the existing reader's spacing and tolerance. A finer grid
+        # scales each negative step down and can admit an unreadable curve.
+        values=spline(np.linspace(0,1,8193))
         if values.min()>=-1e-7 and values.max()<=1+1e-7 and np.diff(values).min()>=-1e-7:return curve,spline
     raise ValueError('Reference needs a different DCP tone representation')
 
@@ -67,18 +69,18 @@ def _inverse_tone(rgb,spline):
     return before_low[:,None]+weight*(before_high-before_low)[:,None]
 
 
-def cube_profile(cube,name,destination,*,bridge=None,base=BASE,dimensions=(90,128,128)):
+def cube_profile(cube,name,destination,*,bridge=None,base=BASE,dimensions=(90,128,128),input_space='sony-st-srgb',output_space='srgb'):
     """Create one new DCP; preserve all selected original calibration payloads."""
     destination=Path(destination)
     if destination.exists():raise FileExistsError(destination)
     source=Path(base).read_bytes();endian,original=tiff_tags(source)
     if original.get(50708,(None,None,b''))[2].rstrip(b'\0')!=b'Sony ILCE-7CM2':
         raise ValueError('Sony ILCE-7CM2 Camera ST calibration is required')
-    parent=DcpLook(base);lut=Cube(cube);input_bridge=Cube(bridge)if bridge else None
+    from .lutspaces import CubeTarget
+    parent=DcpLook(base);cube_target=CubeTarget(cube,input_space,output_space,bridge)
     def reference(rgb):
         entering=parent.render(rgb)
-        if input_bridge is not None:entering=input_bridge.sample(entering)
-        return np.clip(lut.sample(entering),0,1)
+        return np.clip(cube_target.sample(entering),0,1)
     curve,spline=_tone(reference)
     nh,ns,nv=dimensions
     if not 1<=nh<=360 or not 2<=ns<=256 or not 2<=nv<=256:raise ValueError('Unsupported DCP table dimensions')

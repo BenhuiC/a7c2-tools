@@ -33,6 +33,7 @@ CP_CODE = {
     0x4a0a34: "6f4669f2faf20146481c0228bde8804000d27047",
     0x4a0a74: "80b56f46014645f61c400a580a2a0ed80220dfe802f021060621211b1a0a210a2100084679f2bcf110e007200ee04cf61c6042f2827140f22772c0f2f500c0f2fc01bde88040a3f25eb5012069f2b5f20146481c022800d280bd",
     0xb19e14: "80b56f4645f61c4146f68472002350f801c0c0f2e702083252f8081c8c450bd112f804ec90f82217714505d1d2f800e0d0f89c10714505d010320133082bebd3022080bd506880bd",
+    0xe76f84: "020000000c0000000000000003000000020000000e000000000000000e000000020000000c000000010000000d000000020000000e000000010000000f000000010000000c0000000000000002000000010000000e000000000000000b000000010000000c000000010000000a000000010000000e000000010000000c000000",
 }
 
 @pytest.fixture(scope='module')
@@ -151,7 +152,7 @@ def test_wrong_capture_flag_producer_is_rejected_before_planning(stock):
         candidate.patch(ap,bytes(changed))
 
 
-def sound_calls(cp,mode,start):
+def sound_calls(cp,mode,start,*,bits=12,crop=0):
     from unicorn import Uc,UC_ARCH_ARM,UC_MODE_THUMB,UC_HOOK_CODE
     from unicorn.arm_const import UC_ARM_REG_R0,UC_ARM_REG_SP,UC_ARM_REG_LR,UC_ARM_REG_PC
     import struct
@@ -161,8 +162,10 @@ def sound_calls(cp,mode,start):
     cpu.mem_write(0x4a0a34,cp[0x398a34:0x398a34+0x14])
     cpu.mem_write(0x4a0a74,cp[0x398a74:0x398a74+0x5a])
     cpu.mem_map(0xb19000,4096);cpu.mem_write(0xb19e14,cp[0xa11e14:0xa11e14+0x48])
-    cpu.mem_map(0xb0a000,4096);cpu.mem_map(0xe76000,4096)
+    cpu.mem_map(0xb0a000,4096);cpu.mem_map(0xe76000,8192)
+    cpu.mem_write(0xe76f84,cp[0xd6ef84:0xd6ef84+128])
     cpu.mem_map(0x30000000,0x7000);cpu.mem_write(0x30005c1c,struct.pack('<I',mode))
+    cpu.mem_write(0x30000722,bytes([bits]));cpu.mem_write(0x3000009c,struct.pack('<I',crop))
     cpu.mem_map(0x20000000,0x4000);cpu.mem_map(0x50000000,4096)
     cpu.reg_write(UC_ARM_REG_R0,0x30000000);cpu.reg_write(UC_ARM_REG_SP,0x20003000)
     cpu.reg_write(UC_ARM_REG_LR,0x50000001)
@@ -312,4 +315,4 @@ def test_native_mechanical_tail_only_policy_is_preserved(stock):
         result=execute(cp,cp_selector(cp,0),0,patched_cp=fixed,capture_request=0,mechanical_tail_only=tail)
         assert result['mode']==mode
         assert sound_calls(fixed,mode,0x4a09f4)==([] if tail else [1])
-        assert sound_calls(fixed,mode,0x4a0a74)==[2]
+        assert sound_calls(fixed,mode,0x4a0a74)==([3] if tail else [2])

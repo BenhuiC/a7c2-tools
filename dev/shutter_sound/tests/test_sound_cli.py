@@ -97,8 +97,6 @@ class IntegratedSoundTests(unittest.TestCase):
 
     def test_off_uses_only_narrow_CP_inverse_not_global_audio_settings(self):
         def check(base, root, state, native, audio):
-            cli.confirm_audio(root, state, 'correct')
-            cli.confirm_recovery(root, state)
             with patch.object(trial, 'change', return_value={'phase': 'restored'}) as change:
                 cli.off(root, state)
                 change.assert_called_once_with(native, restore=True, zig=None)
@@ -106,9 +104,8 @@ class IntegratedSoundTests(unittest.TestCase):
             self.assertEqual(state['audio_job'], str(audio))
         self.scenario(check)
 
-    def test_recorded_listening_judgment_is_not_a_mandatory_install_gate(self):
+    def test_install_needs_no_manual_listening_or_recovery_gate(self):
         def check(base, root, state, native, audio):
-            cli.confirm_audio(root, state, 'quiet')
             with patch.object(boot_trial, 'install',return_value={'phase':'installed_cold_test_pending'}) as install:
                 result=cli.install(root,state,100)
                 self.assertEqual(result['phase'],'installed_cold_test_pending')
@@ -117,8 +114,6 @@ class IntegratedSoundTests(unittest.TestCase):
 
     def test_install_uses_selected_bytes_without_reusing_audition_provenance(self):
         def check(base, root, state, native, audio):
-            cli.confirm_audio(root, state, 'correct')
-            cli.confirm_recovery(root, state)
             converted = base / 'converted'; converted.mkdir()
             (converted / 'custom-native.private.bin').write_bytes(bytes(64))
             (converted / 'selected.private.wav').write_bytes(b'source has since changed')
@@ -135,7 +130,6 @@ class IntegratedSoundTests(unittest.TestCase):
 
     def test_new_conversion_installs_current_bytes_without_reaudition(self):
         def check(base, root, state, native, audio):
-            cli.confirm_audio(root, state, 'correct'); cli.confirm_recovery(root, state)
             converted = base / 'other'; converted.mkdir()
             payload=bytes([2])*64
             (converted / 'custom-native.private.bin').write_bytes(payload)
@@ -148,7 +142,6 @@ class IntegratedSoundTests(unittest.TestCase):
 
     def test_sound_off_and_save_do_not_require_a_cold_recovery_record(self):
         def check(base, root, state, native, audio):
-            cli.confirm_audio(root, state, 'correct')
             with patch.object(trial,'change',return_value={'phase':'restored'}) as off,patch.object(boot_trial, 'install',return_value={'phase':'installed_cold_test_pending'}) as install:
                 cli.off(root,state)
                 off.assert_called_once()
@@ -162,7 +155,7 @@ class IntegratedSoundTests(unittest.TestCase):
             state['conversion']=str(audio);(audio/'custom-native.private.bin').write_bytes(bytes(64))
             with patch.object(buffer_trial,'run',return_value={'phase':'temporary_pcm_registered_cold_reload_required_after_test'}) as run:
                 cli.audition(root,state)
-            self.assertIsNone(run.call_args.kwargs['recovered_job'])
+            self.assertNotIn('recovered_job',run.call_args.kwargs)
             self.assertEqual(run.call_args.kwargs['replace_jobs'],())
         self.scenario(check)
 
@@ -179,7 +172,6 @@ class IntegratedSoundTests(unittest.TestCase):
 
     def test_unknown_off_result_is_archived_and_next_off_replans_from_current_body(self):
         def check(base, root, state, native, audio):
-            cli.confirm_audio(root, state, 'correct'); cli.confirm_recovery(root, state)
             calls = []
             def change(job, **kwargs):
                 calls.append(Path(job))

@@ -12,14 +12,17 @@ typedef uint8_t u8;typedef uint32_t u32;typedef uint64_t u64;
 #define F_CHROMA 48U
 #define F_FIXED (F_MATRIX+F_CHROMA+14U*576U)
 #define F_EDIT 2200U
-#define F_FRAME (8U+1215U+F_EDIT)
+#define F_WIRE_EDIT (12U+2152U)
+#define F_FRAME (8U+1215U+F_WIRE_EDIT)
+static unsigned char full_decoded[F_EDIT];
+static int full_decoded_valid;
 static uint32_t full_fnv(const unsigned char *p,size_t n){uint32_t v=2166136261U;for(size_t i=0;i<n;i++)v=(v^p[i])*16777619U;return v;}
 static uint32_t full_crc(const unsigned char *p,size_t n){uint32_t v=~0U;for(size_t i=0;i<n;i++){v^=p[i];for(int j=0;j<8;j++)v=(v>>1)^((v&1)?0xedb88320U:0);}return ~v;}
 static void full_put16(unsigned char *p,int v){p[0]=(unsigned char)v;p[1]=(unsigned char)(v>>8);}
-static int full_edit_valid(const unsigned char *p){
-    unsigned char digest[32];SHA256 hash;
-    if(memcmp(p,"A7C2ED02",8)||get32(p+8)!=2152||get32(p+12)!=full_crc(p+48,2152))return bad("full-edit-integrity");
-    sha_init(&hash);sha_add(&hash,p+48,2152);sha_end(&hash,digest);if(memcmp(digest,p+16,32))return bad("full-edit-integrity");
+static int full_edit_valid(const unsigned char *wire){
+    if(memcmp(wire,"A7C2ED03",8)||get32(wire+8)!=2152)return bad("full-edit-layout");
+    unsigned char *p=full_decoded;
+    memcpy(p,"A7C2ED02",8);put32(p+8,2152);memcpy(p+48,wire+12,2152);
     const unsigned char *axis=p+80,*base=p+592,*fit=p+1396;
     if(get32(axis)||get32(axis+127*4)!=65535U*32)return bad("full-edit-axis");
     for(int i=1;i<128;i++)if(get32(axis+i*4)<=get32(axis+(i-1)*4))return bad("full-edit-axis");
@@ -30,9 +33,12 @@ static int full_edit_valid(const unsigned char *p){
         for(int i=0;i<128;i++){uint32_t y=get32(gamma+i*4);if(y>0x3ffffU||(i&&y<get32(gamma+(i-1)*4)))return bad("full-edit-gamma");if(k&&(y&1))return bad("full-edit-gamma-precision");}
     }
     for(int i=4;i<8;i++){int v=get16(fit+276+i*2);if(v<0||v>2046||(v&1))return bad("full-edit-cc1-precision");}
-    return 0;
+    /* Preserve the existing CP record representation, not transport gates. */
+    put32(p+12,full_crc(p+48,2152));SHA256 hash;
+    sha_init(&hash);sha_add(&hash,p+48,2152);sha_end(&hash,p+16);
+    full_decoded_valid=1;return 0;
 }
-static int full_frame(const unsigned char *data,size_t size){return size==F_FRAME&&!memcmp(data,"A7F2LOOK",8);}
+static int full_frame(const unsigned char *data,size_t size){return size==F_FRAME&&!memcmp(data,"A7F3LOOK",8);}
 static int full_axis(const unsigned char *record,uint32_t *nodes){
     static const uint32_t widths[]={32,32,64,128,256,512,1024,2048,4096,8192,16384,32768};
     static const uint32_t bases[]={0,32,64,128,256,512,1024,2048,4096,8192,16384,32768};
@@ -67,7 +73,7 @@ static int full_expand(unsigned char *out,const int *v){
 }
 static int full_entry(int fd,const unsigned char *bank,const unsigned char *data,size_t size,unsigned char **result,unsigned *kind,unsigned *length){
     const unsigned char *edit=NULL;int present=0,tone[3]={0},mat[3][6]={{0}},chroma[24]={0};unsigned char encoded[90];unsigned encoded_size=0;
-    if(full_frame(data,size)){edit=data+8+1215;if(full_edit_valid(edit))return -1;*kind=2;encoded_size=F_EDIT;}
+    if(full_frame(data,size)){if(!full_decoded_valid&&full_edit_valid(data+8+1215))return -1;edit=full_decoded;*kind=2;encoded_size=F_EDIT;}
     else{
         if(size!=1324||data[1215]>1)return bad("look-size");present=data[1215];*kind=present?1:0;
         if(present){

@@ -28,11 +28,20 @@ class CubeCompileTests(unittest.TestCase):
         self.assertFalse(report['Lightroom_reference_used'])
         self.assertFalse(report['automatic_Adobe_profile_generated'])
 
-    def test_log_or_other_input_is_not_assumed_to_be_ST(self):
+    def test_unknown_input_is_not_assumed_to_be_ST(self):
         path=self.cube('identity.cube',lambda rgb:rgb)
-        for space,bridge in [(None,None),('f-log',None),('sony-st-srgb',path)]:
-            with self.assertRaisesRegex(ValueError,'explicit bridge'):
+        for space,bridge in [(None,None),('unknown-space',None)]:
+            with self.assertRaises(ValueError):
                 cube_targets(np.array([[.1,.2,.3]]),path,space,bridge)
+
+    def test_known_log_input_is_converted_and_same_log_output_roundtrips(self):
+        from looktool.lutspaces import convert
+        path=self.cube('identity.cube',lambda rgb:rgb)
+        source=np.array([[.1,.2,.3]])
+        changed,_=cube_targets(source,path,'slog3-sgamut3cine')
+        np.testing.assert_allclose(changed,convert(source,'srgb','slog3-sgamut3cine'))
+        result,_=cube_targets(source,path,'slog3-sgamut3cine',output_space='slog3-sgamut3cine')
+        np.testing.assert_allclose(result,source)
 
     def test_explicit_bridge_is_applied_before_the_look(self):
         bridge=self.cube('bridge.cube',lambda rgb:rgb*.5)

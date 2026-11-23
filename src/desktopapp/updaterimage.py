@@ -161,6 +161,68 @@ def spans(before,after,limit=16384):
         yield start,before[start:at],after[start:at]
 
 
+def restore_comparison(original,installed,current):
+    """Describe out-of-plan sectors without exporting bytes or permitting writes."""
+    if any(len(raw)!=PARTITION_BYTES for raw in (original,installed,current)):
+        raise ValueError('Updater partition length differs')
+    planned=changed=outside=range_count=0
+    first=None;ranges=[];last_end=None
+    for at in range(0,PARTITION_BYTES,512):
+        before=original[at:at+512]
+        owned=before!=installed[at:at+512]
+        planned+=owned
+        actual=current[at:at+512]
+        if actual==before:continue
+        changed+=1
+        if owned:continue
+        outside+=1
+        if first is None:
+            first=at+next(i for i,(a,b) in enumerate(zip(before,actual)) if a!=b)
+        if at!=last_end:
+            range_count+=1
+            if len(ranges)<32:ranges.append(dict(offset=at,bytes=512))
+        elif range_count<=32:ranges[-1]['bytes']+=512
+        last_end=at+512
+    return dict(partition_bytes=PARTITION_BYTES,planned_sectors=planned,
+        changed_sectors=changed,outside_sectors=outside,outside_range_count=range_count,
+        first_outside_difference=hex(first) if first is not None else None,
+        outside_ranges=ranges,outside_ranges_truncated=range_count>len(ranges))
+
+
+def restore_plan(original,installed,current):
+    """Preserve only native dat2/dat3 FAT times; all other outside bytes must match."""
+    raw=restore_comparison(original,installed,current)
+    normalized=bytearray(current);target=bytearray(original);preserved=[]
+    ss=struct.unpack_from('<H',original,11)[0]
+    reserved=struct.unpack_from('<H',original,14)[0]
+    spf=struct.unpack_from('<H',original,22)[0]
+    entries=struct.unpack_from('<H',original,17)[0]
+    root=(reserved+original[16]*spf)*ss;end=root+entries*32
+    if (ss==512 and original[13]==32 and original[16]==2 and reserved and spf and entries
+            and original[510:512]==b'\x55\xaa' and 512<=root<end<=len(original)
+            and original[:end]==installed[:end]):
+        found={name:[] for name in (b'DAT2       ',b'DAT3       ')}
+        for at in range(root,end,32):
+            entry=original[at:at+32]
+            if not entry[0]:break
+            if entry[:11] in found and entry[11]==0x23 and struct.unpack_from('<I',entry,28)[0]==4:
+                found[entry[:11]].append(at)
+        if all(len(offsets)==1 for offsets in found.values()):
+            for name,offsets in found.items():
+                for relative,label in ((14,'creation_time'),(22,'last_write_time')):
+                    at=offsets[0]+relative
+                    before=original[at:at+2];now=current[at:at+2]
+                    if before==now:continue
+                    value=int.from_bytes(now,'little')
+                    if (value>>11)>=24 or ((value>>5)&63)>=60 or (value&31)>=30:continue
+                    normalized[at:at+2]=before;target[at:at+2]=now
+                    preserved.append(dict(file='/'+name.decode('ascii').strip().lower(),
+                        field=label,offset=hex(at),bytes=2))
+    report=restore_comparison(original,installed,normalized)
+    report.update(raw_outside_sectors=raw['outside_sectors'],preserved_fat_times=preserved)
+    return bytes(target),report
+
+
 def checksum_sectors(raw):
     """Locate the checksum file from this image, never from a fixed R5 offset."""
     ss=struct.unpack_from('<H',raw,11)[0];spc=raw[13]

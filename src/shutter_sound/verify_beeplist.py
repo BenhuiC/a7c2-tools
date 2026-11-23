@@ -123,8 +123,10 @@ def execute(ap, data=CSV, *, missing=False, boot_block=False,
     if cpu.reg_read(UC_ARM64_REG_SP) != initial_sp:
         raise ValueError('Reader did not restore the caller stack pointer')
     after = bytes(cpu.mem_read(ram, len(before)))
+    # Real AP descriptor order, confirmed by the native registry probe.
+    kinds=(1,2,3,8,7,9,17,18,4,5,6,16,19,20,21,22,23,24,25,10,11,12,13,14,15)
     for i in range(25):
-        if i+1 not in expected_kinds and after[i*176:(i+1)*176]!=before[i*176:(i+1)*176]:
+        if kinds[i] not in expected_kinds and after[i*176:(i+1)*176]!=before[i*176:(i+1)*176]:
             raise ValueError('Original reader changed a neighboring descriptor')
     row = after[352:528]
     return {'returned': cpu.reg_read(UC_ARM64_REG_X0),
@@ -141,7 +143,7 @@ def execute(ap, data=CSV, *, missing=False, boot_block=False,
                 bytes=struct.unpack_from('<Q',after,i*176+16)[0],
                 offset=struct.unpack_from('<Q',after,i*176+24)[0],
                 filename=after[i*176+44:i*176+172].split(b'\0',1)[0].decode('ascii',errors='replace'))
-                for i in range(3)],
+                for i in range(25)],
             'external_calls_simulated': sorted(set(hex(n) for n in external_calls)),
             'camera_io': False, 'camera_boot_verified': False}
 

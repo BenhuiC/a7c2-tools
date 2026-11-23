@@ -75,7 +75,8 @@ def test_filter_batch_preserves_same_operations(view,transport):
 
 def test_host_processing_buttons_remain_offline_in_ssh_mode(view):
     view.sound_transport.select('ssh')
-    for action in ('sound_import','sound_generate','sound_volume'):
+    assert view.findChild(W.QPushButton,'action_sound_generate')is None
+    for action in ('sound_import','sound_volume'):
         assert action not in catalog.CAMERA_ACTIONS and action not in catalog.POWER_ACTIONS
         buttons=view.findChildren(W.QPushButton,'action_'+action)
         assert buttons

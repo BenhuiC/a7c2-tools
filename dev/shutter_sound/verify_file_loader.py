@@ -44,6 +44,8 @@ def execute(ap, payload, mode):
         if at == 0x305f750:
             uc.emu_stop()
             return
+        if 0x2759b40 <= at < 0x2759b78:
+            return  # Bounded file slice in the retired missing-CSV fatal block.
         if 0x305f020 <= at < 0x305f928:
             return
         x0, x1, x2 = (uc.reg_read(r) for r in (UC_ARM64_REG_X0, UC_ARM64_REG_X1, UC_ARM64_REG_X2))

@@ -1,4 +1,5 @@
 """Incremental custom-slot editor. This module never opens a camera."""
+import json
 from pathlib import Path
 from PySide6 import QtCore, QtGui, QtWidgets as W
 from .theme import COLORS, EDITOR as STYLE
@@ -75,9 +76,9 @@ class Operation(W.QFrame):
         self.file_path=str(path);self.file.setText(Path(path).name);self.file.setToolTip(str(path))
         self.icon_button.setEnabled(Path(path).is_file())
         try:
-            from looktool import lookfile
-            icon=lookfile.read(path).get('menu_icon')
-            self.icon_status.setText('已嵌入菜单图标 · 本地固件生成生效' if icon else '未附带图标 · 沿用原生 ST 图标')
+            document=json.loads(Path(path).read_text(encoding='utf-8-sig'))
+            icon=document.get('menu_icon')if isinstance(document,dict)else None
+            self.icon_status.setText('已嵌入菜单图标 · 与外观一起写入' if icon else '未附带图标 · 沿用原生 ST 图标')
         except (OSError,ValueError):self.icon_status.setText('请先选择有效的 A7Look')
         self.changed.emit()
 

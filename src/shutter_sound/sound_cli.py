@@ -1,4 +1,4 @@
-"""Integrated sound workflow; status/help/conversion/confirmation stay offline.
+"""Integrated sound workflow; status/help/conversion stay offline.
 
 on/off changes the narrow CP electronic-capture branch, not Audio Signals or AF
 beeps. install/restore-sound controls the separate persistent kind3 sound hook.
@@ -118,9 +118,21 @@ def retire_readonly_failure(root, state):
 
 def retire_prewrite_install(root,state):
     pending=state['pending'];path=pending.get('job')
-    if not path or path!=state.get('boot_job'):return False
+    if not path:return False
     try:previous=load_job(path)
     except (OSError,ValueError):return False
+    if previous.get('schema')=='a7c2-targeted-sound-job/1':
+        if (previous.get('failed_during')!='preparing' or
+                previous.get('audio_resources_written') is not False or
+                not trial.completed_readonly_failure(dict(previous,schema='a7c2-shutter-job/1'))):
+            return False
+        state.setdefault('history',[]).append(dict(command='install',job=path,
+            phase='failed_before_publication',retired_readonly_failure=True))
+        state['pending']=None
+        save(root,state)
+        print('上次自定义音效保存已确认停在写入前，检查和临时清理完整；保留原记录，重新读取当前相机。',flush=True)
+        return True
+    if path!=state.get('boot_job'):return False
     if (previous.get('schema')!='a7c2-native-boot-sound-job/1' or
             previous.get('phase')!='needs_review' or
             previous.get('camera_firmware_written') is not False or
@@ -322,38 +334,15 @@ def audition(root, state, zig=None):
     job = new_path(root, 'audition')
     state['audio_job'] = str(job)
     result = operate(root, state, 'audition', job, lambda: buffer_trial.run(job, original,
-        zig, payload=payload, register=True, wire_format=0, recovered_job=None,replace_jobs=()))
+        zig, payload=payload, register=True, wire_format=0,replace_jobs=()))
     print('USB I/O ended. Unplug USB WITHOUT switching off, removing the battery or changing Audio Signals. '
           'Take one electronic exposure; check volume/distortion/pitch/speed and normal shooting/playback. '
-          'Then record confirm --result correct (or the actual failure). No ROM was written.')
+          'The temporary preview disappears after removing the battery and restarting. No ROM was written.')
     return result
 
 
-def confirm_audio(root, state, result):
-    import buffer_trial
-    supersede_pending(root,state,'confirm-audio')
-    previous=optional_job(state.get('audio_job'))
-    if previous and previous.get('phase')=='temporary_pcm_registered_cold_reload_required_after_test':
-        value=buffer_trial.confirm(Path(state['audio_job']),result)
-    else:
-        state.setdefault('history',[]).append(dict(command='confirm-audio',result=result,owner_statement_only=True))
-        save(root,state)
-        value=dict(phase='owner_audio_statement_recorded',camera_io=False,owner_audio_correct=result=='correct')
-    print('试听结果已记录；可直接保存当前转换片段，无需先断电恢复。')
-    return value
 
 
-def confirm_recovery(root, state):
-    import buffer_trial
-    supersede_pending(root,state,'confirm-recovery')
-    previous=optional_job(state.get('audio_job'))
-    if previous and previous.get('phase') in ('temporary_pcm_registered_cold_reload_required_after_test',
-            'owner_confirmed_audio_cold_reload_required','owner_audio_failed_cold_reload_required',
-            'owner_requested_gain_adjustment_cold_reload_required'):
-        return buffer_trial.confirm_recovery(Path(state['audio_job']))
-    state.setdefault('history',[]).append(dict(command='confirm-recovery',owner_statement_only=True))
-    save(root,state)
-    return dict(phase='owner_confirmed_cold_recovered',camera_io=False,owner_statement_only=True)
 
 
 @replace_request('install')
@@ -406,7 +395,7 @@ def compile_install(ap,cp,payload,output,zig=None):
                 program_windows=len(parts['windows']))
 
 
-RESTORABLE = ('installed_cold_test_pending', 'loaded_owner_confirmation_pending', 'owner_confirmed_working')
+RESTORABLE = ('installed_cold_test_pending', 'loaded', 'loaded_owner_confirmation_pending', 'owner_confirmed_working')
 
 
 def restorable_install(root, state):
@@ -448,13 +437,13 @@ def restore_sound(root, state, zig=None):
 
 
 @replace_request('verify',refresh=False)
-def verify(root, state, heard_correct=False):
+def verify(root, state):
     import boot_trial
     require_idle(state)
     if not state.get('boot_job'):
         raise ValueError('No persistent installation to verify')
     job = Path(state['boot_job'])
-    return operate(root, state, 'verify', job, lambda: boot_trial.verify_loaded(job, heard_correct))
+    return operate(root, state, 'verify', job, lambda: boot_trial.verify_loaded(job))
 
 
 def status(state,root=None):
@@ -524,9 +513,7 @@ def parser():
         ('import', 'Offline: extract selected WAV/MP3/MP4 audio and encode a private candidate'),
         ('volume', 'Offline: adjust converted audio volume without camera access'),
         ('audition', 'Temporarily register converted audio in RAM, no ROM write'),
-        ('confirm', 'Offline: record the actual listening result'),
-        ('confirm-recovery', 'Offline statement: cold power-off done, native sound/shooting/playback normal'),
-        ('install', 'Persist the exact owner-accepted sound; files before boot hook'),
+        ('install', 'Persist the selected sound; files before boot hook'),
         ('verify', 'Read loaded code/files/descriptor after cold boot'),
         ('restore-sound', 'Restore native sound; disable/read back boot hook before removing files'),
         ('check-connection', 'Read current sound programs and body identity; no workers or writes'),
@@ -554,15 +541,10 @@ def parser():
             s.add_argument('--duration', type=float)
             s.add_argument('--peak', type=float, default=0.4)
             s.add_argument('--ffmpeg', type=Path)
-        if name == 'confirm':
-            s.add_argument('--result', required=True,
-                           choices=('correct', 'quiet', 'noise', 'wrong-speed', 'native', 'silent'))
         if name == 'volume':
             gain = s.add_mutually_exclusive_group(required=True)
             gain.add_argument('--decibels', type=float)
             gain.add_argument('--reset', action='store_true')
-        if name == 'verify':
-            s.add_argument('--heard-correct', action='store_true')
         if name=='compile-install':
             for flag in ('ap','cp','native-bin'):s.add_argument('--'+flag,type=Path,required=True)
     return p
@@ -580,11 +562,9 @@ def workspace_command(args):
         if command=='off':return off(root,state,args.zig)
         if command=='attach':return attach(root,state,args.native_job,args.audio_job)
         if command=='audition':return audition(root,state,args.zig)
-        if command=='confirm':return confirm_audio(root,state,args.result)
-        if command=='confirm-recovery':return confirm_recovery(root,state)
         if command=='install':return install(root,state,args.battery_percent,args.zig,power_confirmed=args.power_confirmed)
         if command=='restore-sound':return restore_sound(root,state,args.zig)
-        if command=='verify':return verify(root,state,args.heard_correct)
+        if command=='verify':return verify(root,state)
         if command=='check-connection':return check_connection(state)
         if command=='prepare-audition':return prepare_audition(root,state)
         return status(state,root)
@@ -611,7 +591,7 @@ def main(argv=None, *, report=None, failure=None):
         # The desktop needs the actual result phase, especially for cold reload
         # versus adoption/temporary audition. Do not infer it from command success.
         public = {key: result[key] for key in ('phase', 'camera_io', 'camera_firmware_written',
-            'complete_readback_and_settings_verified', 'owner_audio_correct', 'bytes', 'preview', 'volume_gain_db','volume_limited',
+            'complete_readback_and_settings_verified', 'bytes', 'preview', 'volume_gain_db','volume_limited',
             'adopted_existing_enabled', 'sound_support_enabled_on_disk','audio_registration_started',
             'audio_resources_written','resource_update','adopted_same_sound',
             'completed_prior_marker_replaced','previous_marker_absent','previous_cp_handle_released') if key in result}

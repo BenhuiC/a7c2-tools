@@ -160,7 +160,7 @@ def activated(documents,slots,event_id,since,settings_path=None):
 
 def after_verified(state,save,event_id,documents,slots):
     """A host-profile error never turns a verified firmware write into a retry."""
-    if state.get('phase') not in ('VERIFIED','COMPLETE','RESTORED'):
+    if state.get('phase') not in ('VERIFIED','LOADED','COMPLETE','RESTORED'):
         return dict(status='awaiting_verified_activation')
     since=state.get('raw_profile_effective_since') or datetime.now().isoformat(timespec='microseconds')
     try:result=activated(documents,slots,event_id,since)

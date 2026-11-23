@@ -9,18 +9,19 @@ from test_ssh_updates import Connection
 
 
 def source_banks():
-    menuicons.vertical_modules()
-    from verticaltool import nativeportrait
+    from desktopapp import portraitresources
     a,b=bank(group=0,all_views=True),bank(group=1,all_views=True)
-    return dict(zip(iconresources.NAMES,(a,b,nativeportrait.prepare(a,0),nativeportrait.prepare(b,1))))
+    return dict(zip(iconresources.NAMES,(a,b,*portraitresources.targets()[:2])))
 
 
-def test_all_orientations_are_owned_idempotent_and_keep_original_resources():
-    from verticaltool import nativeportrait
+def test_m4_portrait_icons_are_idempotent_and_keep_original_resources():
     before=source_banks();icon=iconfile.from_mask(bytes((i*17)%256 for i in range(494)))
     after=iconresources.replace(before,{2:icon})
     assert all(after[n]!=before[n] for n in iconresources.NAMES)
-    assert all(nativeportrait.owned(after[n]) for n in iconresources.NAMES[2:])
+    for index,name in enumerate(iconresources.NAMES):
+        expected,plan=menuicons.replace(before[name],{2:icon},group=index%2,all_views=True)
+        assert after[name]==expected
+        assert plan['old_payloads_preserved'] and plan['registered_ids_preserved']
     assert iconresources.replace(after,{2:icon})==after
     assert set(after)==set(before)
 
@@ -30,8 +31,10 @@ def test_compile_ssh_artwork_carries_four_images_without_relaxing_usb_guard(tmp_
     from looktool import bundle
     import pytest
     images=source_banks();current={'appFw.so':b'AP','cpapp-b.bin':b'CP',**{'images/'+k:v for k,v in images.items()}}
+    from test_icon_api import document
+    original=tmp_path/'original.a7look';original.write_text(json.dumps(document()))
     source=tmp_path/'look.a7look'
-    iconfile.save_copy(presets.catalog()[0]['path'],source,iconfile.from_mask(bytes([255])*494))
+    iconfile.save_copy(original,source,iconfile.from_mask(bytes([255])*494))
     with pytest.raises(ValueError,match='USB'):lookbatch.options([dict(slot=2,path=str(source))])
     monkeypatch.setattr(sshupdates,'baseline',lambda folder:(tmp_path,current,[{},{}],{}))
     monkeypatch.setattr(bundle,'plan',lambda *args:(dict(current),[{},{}],{}))

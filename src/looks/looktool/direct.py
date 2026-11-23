@@ -680,7 +680,7 @@ class DirectJob(Rollback):
                     mark_unknown()
                 raise
 
-    def verify_direct(self, *, factory_values=None, accepted=False):
+    def verify_direct(self, *, factory_values=None):
         self.state = json.loads(self.state_path.read_text(encoding='utf-8'))
         if self.state['phase'] not in ('AWAITING_RELOAD', 'LOADED', 'COMPLETE'):
             raise ValueError('Inspect the unfinished transaction before another write')
@@ -745,8 +745,8 @@ class DirectJob(Rollback):
                 self.record('name_backups_removed_after_new_boot')
             if self.state['mode']=='factory_reset':
                 self.cleanup_sound_resources(camera)
-        self.save('COMPLETE' if accepted else 'LOADED', physical_checks_accepted=accepted)
-        if accepted and self.state['mode'] in ('look_import', 'slot_default', 'factory_reset', 'install_all'):
+        self.save('LOADED')
+        if self.state['mode'] in ('look_import', 'slot_default', 'factory_reset', 'install_all'):
             from .rawidentity import after_verified
             slots = list(range(1, 7)) if self.state['mode'] == 'factory_reset' else [self.state['slot']]
             documents = [dict(name='ST', raw_profile=None) for _ in slots]

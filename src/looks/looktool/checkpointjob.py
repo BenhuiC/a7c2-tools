@@ -214,11 +214,11 @@ class Rollback:
                     self.native(camera,'wbi',0);self.native(camera,'wbi',1)
                 elif runtime['image_mode'].strip()!='0':raise ValueError('Unsupported retained image state')
             self.save('RESTORED_AWAITING_RELOAD')
-            print('All I/O ended. Disconnect USB/power, shut down normally, wait for the access lamp, remove battery for ≥1 minute. Restart and check preview/photos/playback, then run: python recovery.py verify "'+str(self.root)+'" --accept-photos',flush=True)
+            print('All I/O ended. Disconnect USB/power, shut down normally, wait for the access lamp, remove battery for ≥1 minute. Restart and check preview/photos/playback, then run: python recovery.py verify "'+str(self.root)+'"',flush=True)
             return self.state
         except BaseException as exc:
             self.save('NEEDS_REVIEW',error=str(exc));raise
-    def verify(self,accept_photos=False):
+    def verify(self):
         self.state=json.loads(self.state_path.read_text(encoding='utf-8'))
         if self.state['phase'] not in ('RESTORED_AWAITING_RELOAD','LOADED','COMPLETE'):raise ValueError('Rollback did not finish; inspect evidence before further actions')
         manifest,target=checkpoint.read(self.root/'target.private.zip')
@@ -234,6 +234,6 @@ class Rollback:
             for span in runtime['spans']:
                 expected=target['appFw.so'][span['offset']:span['offset']+span['length']].hex()
                 if span['memory']!=expected or span['disk']!=expected:raise ValueError('Old AP is still loaded; complete a cold restart')
-        self.save('COMPLETE' if accept_photos else 'LOADED',physical_checks_accepted=accept_photos,
+        self.save('LOADED',
             loaded_state_scope='AP probe spans; CP RAM and physical behavior require user checks')
         return self.state

@@ -15,6 +15,7 @@ def run(args):
         argv += ['--menu-icon-text',args['menu_icon_text']]
     if Path(args['source']).suffix.lower() == '.cube':
         argv += ['--input-space', args.get('input_space', 'sony-st-srgb')]
+        argv += ['--output-space', args.get('output_space','srgb')]
         if args.get('bridge'):
             argv += ['--bridge', args['bridge']]
 

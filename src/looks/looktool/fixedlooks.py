@@ -39,7 +39,12 @@ def inspect(ap):
     candidates=[(False,0)] if current==before[marker] else [(True,m) for m in range(64)
         if current==bytes.fromhex(data['templates'][m][str(marker)])]
     for enabled,mask in candidates:
-        if all(ap[at:at+len(raw)]==raw for at,raw in windows(mask,enabled=enabled).items()):
+        expected=windows(mask,enabled=enabled)
+        status_offsets=set(data.get('status_icon_offsets',()))
+        status_current=all(ap[at:at+len(expected[at])]==expected[at] for at in status_offsets)
+        status_original=all(ap[at:at+len(before[at])]==before[at] for at in status_offsets)
+        if (all(ap[at:at+len(raw)]==raw for at,raw in expected.items() if at not in status_offsets)
+                and (status_current or status_original)):
             route=transport(ap)
             if enabled and route['kind']=='fixed' and route['mask']!=mask:
                 raise ValueError('Fixed-look snapshot converter and menu masks differ')
@@ -47,6 +52,7 @@ def inspect(ap):
                 enabled=enabled,
                 base_picker_locked=bool(mask),parameters_editable=True,
                 snapshot_base_normalized=enabled and route['kind']=='fixed' and route['mask']==mask,
+                live_status_slot_icons=enabled and bool(status_offsets) and status_current,
                 code_extent_growth=0,registered_image_ids_added=0)
     raise ValueError('Fixed-look native bytes conflict or contain mixed generations')
 

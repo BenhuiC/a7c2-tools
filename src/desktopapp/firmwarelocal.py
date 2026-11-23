@@ -15,8 +15,68 @@ import tarfile
 import zlib
 
 from .paths import ROOT, write_json
+from . import VERSION
 
 MODEL = 0x20030014
+BUILD_OUTPUTS = (
+    'build.private.json','original.FDAT.private.bin','original-images','overlays',
+    'default-menu-icons','composition.private.json','baseline','fixed-look-source','custom-sound',
+    'ssh','api','startup','edited-images','capacity.private.json','candidate-firmware.private.tar',
+    'candidate.FDAT.UNSIGNED.bin','candidate.RESEARCH.DAT','BODYDATA.DAT','firmware-public.pem','signature.private.json',
+)
+
+
+def prepare_output(directory, *, inputs=()):
+    """Build directly in the chosen folder, replacing only our own prior outputs."""
+    if not str(directory).strip():raise ValueError('请选择固件保存位置')
+    out=Path(directory).resolve()
+    if out.exists() and not out.is_dir():raise ValueError('固件保存位置必须是文件夹')
+    protected=[Path(value).resolve() for value in inputs if value]
+    targets=[out/name for name in BUILD_OUTPUTS]
+    # Resolve all recursive targets before touching any prior output.
+    for target in targets:
+        resolved=target.resolve()
+        if not resolved.is_relative_to(out):raise ValueError('构建输出指向保存目录之外：'+str(target))
+        if any(value==resolved or value.is_relative_to(resolved) for value in protected):
+            raise ValueError('来源文件与构建产物重名，请将来源文件移到保存目录之外：'+str(target))
+    out.mkdir(parents=True,exist_ok=True)
+    for target in targets:
+        if target.is_symlink():target.unlink()
+        elif target.is_dir():shutil.rmtree(target)
+        elif target.exists():target.unlink()
+    return out
+
+
+def finish_output(out, report, job):
+    """Remove successful build intermediates; keep update baselines with the job."""
+    if not report.get('signed'):
+        return None
+    out=Path(out).resolve()
+    records=Path(job).resolve()/'firmware-output'
+    targets=[out/name for name in BUILD_OUTPUTS if name!='BODYDATA.DAT']
+    for target in targets:
+        resolved=target.resolve()
+        if not resolved.is_relative_to(out) or records.is_relative_to(resolved):
+            raise ValueError('构建清理目录超出保存位置或包含任务记录：'+str(target))
+    records.mkdir(parents=True,exist_ok=False)
+    for name in ('baseline','ssh','firmware-public.pem','signature.private.json',
+                 'composition.private.json','capacity.private.json'):
+        source=out/name
+        if source.exists():
+            shutil.move(str(source),str(records/name))
+    if (records/'baseline').is_dir():
+        report['baseline']=str(records/'baseline')
+    report['build_record']=str(records/'build.private.json')
+    write_json(records/'build.private.json',report)
+    for target in targets:
+        if target.is_symlink():target.unlink()
+        elif target.is_dir():shutil.rmtree(target)
+        elif target.exists():target.unlink()
+    report['intermediate_files_removed']=True
+    write_json(records/'build.private.json',report)
+    return records
+
+
 IMAGE_NAMES = {'rootfs':'0700_part_image/dev/nflasha7',
                'cp':'0700_part_image/dev/nflasha8', 'usr':'0700_part_image/dev/nflasha15'}
 
@@ -35,7 +95,7 @@ def tools():
 def version_bytes(value):
     import re
     if not re.fullmatch(r'[0-9]\.[0-9]{2}',value):
-        raise ValueError('固件头版本使用 Sony 格式，例如 3.01，而不是 3.0.1')
+        raise ValueError('固件头版本使用 Sony 格式，例如 3.10，而不是 3.1.0')
     major,minor=value.split('.')
     return int(major,16),int(minor,16)
 
@@ -70,23 +130,33 @@ def patch_defaults(raw,wanted,source_records,*,scalar_fields=()):
             stream=io.BytesIO(raw[at-12:]);backup=BackupFile(stream)
         except Exception:continue
         matches.append((at-12,stream,backup))
+    if len(matches)!=2 or len(source_records)!=2:
+        raise ValueError('Regional default must contain two valid BK4 banks')
+    if matches[0][0]+matches[0][2].size>matches[1][0]:
+        raise ValueError('Regional default BK4 banks overlap')
+    maps=[dict(backup.listProperties())for _,_,backup in matches]
+    for chip in (0,1):
+        for key,value in wanted[chip].items():
+            owners=[i for i,properties in enumerate(maps)if key in properties]
+            if owners!=[chip] or key not in source_records[chip]:
+                raise ValueError('Regional default target property missing or ambiguous: '+hex(key))
+            if maps[chip][key].attr!=source_records[chip][key].attr:
+                raise ValueError('Regional default target property attributes differ: '+hex(key))
     result=bytearray(raw)
-    for at,stream,backup in matches:
-        properties=dict(backup.listProperties())
-        for chip in (0,1):
-            for key,value in wanted[chip].items():
-                if key not in properties:continue
-                original=source_records[chip][key].data;current=properties[key].data
-                if len(current)!=len(original) or len(value)!=len(original):raise ValueError('Regional default property size differs')
-                if key in scalar_fields:
-                    if current not in (b'\0',b'\1') or value not in (b'\0',b'\1'):raise ValueError('Feature switch is not a native boolean')
-                    backup.setProperty(key,value);continue
-                patched=bytearray(current)
-                for index,(before,after) in enumerate(zip(original,value)):
-                    if before!=after:
-                        if current[index] not in (before,after):raise ValueError('Regional default edited-byte conflict')
-                        patched[index]=after
-                backup.setProperty(key,bytes(patched))
+    for chip,(at,stream,backup) in enumerate(matches):
+        properties=maps[chip]
+        for key,value in wanted[chip].items():
+            original=source_records[chip][key].data;current=properties[key].data
+            if len(current)!=len(original) or len(value)!=len(original):raise ValueError('Regional default property size differs')
+            if key in scalar_fields:
+                if current not in (b'\0',b'\1') or value not in (b'\0',b'\1'):raise ValueError('Feature switch is not a native boolean')
+                backup.setProperty(key,value);continue
+            patched=bytearray(current)
+            for index,(before,after) in enumerate(zip(original,value)):
+                if before!=after:
+                    if current[index] not in (before,after):raise ValueError('Regional default edited-byte conflict')
+                    patched[index]=after
+            backup.setProperty(key,bytes(patched))
         backup.updateChecksum();changed=stream.getvalue()[:backup.size]
         result[at:at+len(changed)]=changed
     return bytes(result)
@@ -103,12 +173,27 @@ def rewrite_sum(raw,replacements):
             if len(matches)>1:raise ValueError('Ambiguous checksum target: '+relative)
             if matches:
                 name,path=matches[0];crc=0
+                if name in changed:raise ValueError('Duplicate checksum target: '+relative)
+                if len(parts[1])!=8 or len(parts[2])!=8:
+                    raise ValueError('Checksum target CRC or length is malformed: '+relative)
+                int(parts[1],16);int(parts[2],16)
                 with Path(path).open('rb') as source:
                     while block:=source.read(4<<20):crc=zlib.crc32(block,crc)
                 parts[1]=f'{crc&0xffffffff:08x}';parts[2]=f'{Path(path).stat().st_size:08x}'
                 line=','.join(parts)+tail;changed.append(name)
         lines.append(line)
+    if set(changed)!=set(replacements):
+        raise ValueError('Checksum list is missing replacement targets')
     return ''.join(lines).encode('ascii'),changed
+
+
+def default_template_names(members):
+    names=[m.name for m in members if m.isfile()and m.name.startswith('0110_backup/')and m.name.endswith('.bin')]
+    if len(names)!=12 or len(set(names))!=12 or not all(n.startswith('0110_backup/SYSIPSX-DSLR/PP/')for n in names):
+        raise ValueError('Expected all twelve C2 PP default templates')
+    if sum(n.endswith('/CX89700_ALLLANG.bin')for n in names)!=1:
+        raise ValueError('C2 default reference template is missing or ambiguous')
+    return set(names)
 
 
 def build(args,job):
@@ -117,10 +202,12 @@ def build(args,job):
     setup_runtime()
     sys.path.insert(0,str(ROOT/'src/shutter_sound'))
     from looktool.devicesession import modules
-    from .imageedit import edit_images
+    from .imageedit import edit_images,check_environment
     from .firmwarewbi import IMAGE_NAME as WBI_IMAGE_NAME, invalidate_packaged_wbi, audit_packaged_wbi
     from . import firmwarefeatures
     features=firmwarefeatures.options(args)
+    update_version=args.get('update_version',VERSION)
+    major,minor=version_bytes(update_version)
     if args.get('looks'):
         from looktool import bundle
         bundle.documents(dict(looks=args['looks']),allow_menu_icons=True)
@@ -136,13 +223,15 @@ def build(args,job):
     signing_public=args.get('signing_public_key')
     if bool(signing_private)!=bool(signing_public):
         raise ValueError('签名时请同时选择配对的 RSA 私钥和公钥')
-    out=Path(args['workspace']).resolve()
-    out.mkdir(parents=True,exist_ok=False)
+    check_environment()
+    out=prepare_output(args['workspace'],inputs=(args.get('sony_firmware'),args.get('signing_container'),
+        args.get('signing_private_key'),args.get('signing_public_key'),(args.get('custom_sound')or{}).get('source'),
+        *(row.get('path') for row in args.get('looks',[]))))
     report=dict(schema='a7c2-local-firmware/1',phase='PREPARING',camera_io=False,
                 signed=False,card_flash_ready=False,physical_tested=False,
-                model='ILCE-7CM2',base_version='2.01',update_header_version=args.get('update_version','3.10'),
-                version_rollback_implemented=True,source=str(Path(args['sony_firmware']).resolve()))
-    major,minor=version_bytes(report['update_header_version'])
+                model='ILCE-7CM2',base_version='2.01',update_header_version=update_version,
+                version_rollback_implemented=True,version_rollback_verified=False,
+                source=str(Path(args['sony_firmware']).resolve()))
     status=out/'build.private.json';write_json(status,report)
     try:
         if args.get('preset_pack'):
@@ -159,6 +248,7 @@ def build(args,job):
             header=fdat.FdatHeader.unpack(stream);contents=fdat.readFdat(stream)
             with tarfile.open(fileobj=contents.firmware,mode='r:') as archive:
                 members=archive.getmembers()
+                default_template_names(members)
                 for role,name in IMAGE_NAMES.items():
                     member=archive.getmember(name);path=originals/(role+'.img')
                     with path.open('xb') as target:shutil.copyfileobj(archive.extractfile(member),target)
@@ -225,6 +315,7 @@ def build(args,job):
         write_json(baseline/'baseline.private.json',dict(schema='a7c2-ssh-update-baseline/1',model='ILCE-7CM2',version='2.01',
             files=sorted(baseline_names),wanted=[{str(k):v.hex() for k,v in fields.items()} for fields in wanted]))
         for name,raw in default_members.items():
+            if not name.endswith('.bin'):continue
             from looktool import voicelock,verticalpersist
             changed=patch_defaults(raw,wanted,source_records,scalar_fields=(voicelock.SETTING,voicelock.TRIGGER,verticalpersist.SETTING))
             if changed!=raw:
@@ -235,6 +326,15 @@ def build(args,job):
             for role,rows in additions.items():files[role].update(rows)
             report['camera_command']='/usr/bin/a7c2-api'
             report['camera_command_bytes']=(out/'ssh/api/a7c2-api').stat().st_size
+        else:
+            from .sshboot import prepare_api
+            from .startup import prepare_hook
+            files['usr'].update(prepare_api(target,out/'api',args.get('zig')))
+            report['camera_command']='/usr/bin/a7c2-api'
+            report['camera_command_bytes']=(out/'api/a7c2-api').stat().st_size
+            files['rootfs'].update(prepare_hook(originals/'rootfs.img',out/'startup'))
+        report.update(log_startup_script='/log/a7c2-start.sh',log_startup_errors_ignored=True,
+                      log_script_installed_on_device=False,SD_initialization_verified=False)
         edited=edit_images(originals,files,out/'edited-images')
         from .firmwarespace import report as capacity_report
         capacity=capacity_report(originals,edited,files)
@@ -242,15 +342,21 @@ def build(args,job):
         for role,name in IMAGE_NAMES.items():
             if files[role]:replacements[name]=edited[role]
         sums=[]
+        groups={'backup.sum':'0110_backup/','part_image.sum':'0700_part_image/'}
         with decoded.open('rb') as stream:
             contents=fdat.readFdat(stream)
             with tarfile.open(fileobj=contents.firmware,mode='r:') as archive:
                 for member in archive:
                     if member.isfile() and member.name.endswith('.sum'):
-                        raw=archive.extractfile(member).read();changed,ledger=rewrite_sum(raw,replacements)
+                        prefix=groups.get(Path(member.name).name)
+                        targets={name:path for name,path in replacements.items()if prefix and name.startswith(prefix)}
+                        raw=archive.extractfile(member).read();changed,ledger=rewrite_sum(raw,targets)
                         if ledger:
                             dest=overlays/(member.name.replace('/','_'));dest.write_bytes(changed)
                             replacements[member.name]=dest;sums+=ledger
+        expected={name for name in replacements if any(name.startswith(prefix)for prefix in groups.values())}
+        if set(sums)!=expected or len(sums)!=len(set(sums)):
+            raise ValueError('Firmware checksum lists do not cover each replacement exactly once')
         archive_path=out/'candidate-firmware.private.tar'
         from .firmwarearchive import replace_members
         with decoded.open('rb') as stream:
@@ -258,6 +364,8 @@ def build(args,job):
             report['archive_overlay']=replace_members(contents.firmware,replacements,archive_path)
         candidate=out/'candidate.FDAT.UNSIGNED.bin'
         with decoded.open('rb') as source:prefix=bytearray(source.read(header.firmwareOffset))
+        report['settings_activation']=dict(enabled=False,method='USB_before_card_update',
+            original_update_body_preserved=True)
         prefix[0x20],prefix[0x21]=minor,major
         struct.pack_into('<I',prefix,0x34,archive_path.stat().st_size)
         struct.pack_into('<I',prefix,8,zlib.crc32(prefix[12:fdat.FdatHeader.size])&0xffffffff)
@@ -282,11 +390,14 @@ def build(args,job):
                       fixed_look_storage=composition.get('fixed_look_storage'),
                       features=features,voice_audio_removed=len(LANGUAGES),
                       voice_bytes_removed=sum(voice_sources[name+'.bin'] for name in LANGUAGES),
-                      portrait_resources=len(resource_files),
+                      portrait_resources=sum(path.startswith('/share/app/')for path in resource_files),
+                      custom_shutter_sound=composition.get('custom_shutter_sound'),
                       capacity=capacity,
                       note='Plaintext FDAT for offline/VM validation. No trusted signature, no stock-device card-flash acceptance.')
         finish_signing(args,candidate,out,report)
-        write_json(status,report);write_json(Path(job)/'backend-workspace.private.json',dict(workspace=str(out)))
+        records=finish_output(out,report,job)
+        if records is None:write_json(status,report)
+        write_json(Path(job)/'backend-workspace.private.json',dict(workspace=str(records or out)))
         return report
     except BaseException as exc:
         report.update(phase='FAILED',error=type(exc).__name__+': '+str(exc));write_json(status,report);raise
@@ -307,8 +418,13 @@ def finish_signing(args,candidate,out,report):
     signed=sign_candidate(candidate,container,
                           args['signing_private_key'],args['signing_public_key'],
                           Path(out)/'candidate.RESEARCH.DAT')
+    # Publish the camera's filename only after the existing signer/readback succeeds.
+    final=Path(out)/'BODYDATA.DAT'
+    Path(signed['candidate']).replace(final)
+    signed['candidate']=str(final)
     shutil.copyfile(args['signing_public_key'],Path(out)/'firmware-public.pem')
     write_json(Path(out)/'signature.private.json',signed)
     report.update(phase=signed['phase'],signed=True,plaintext_candidate=str(candidate),
                   candidate=signed['candidate'],signature_validation=signed,
                   note='Owner-signed offline DAT candidate. First trust installation, boot and physical card update remain unverified.')
+    print('固件已生成：'+str(final)+'。SD 卡只需要这份 BODYDATA.DAT。',flush=True)

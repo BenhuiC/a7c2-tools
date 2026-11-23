@@ -16,6 +16,12 @@ def edges(shape):
 def fit(base, target, mass, strength, *, gate=None, response=None, shape=(5, 9, 9),
         iterations=600, continuous=False):
     import torch
+    if isinstance(response,dict):
+        from measured_response import get
+        model=get(response)
+        if getattr(model,'nonlinear_grid',False):
+            if tuple(shape)!=(5,9,9):raise ValueError('Native latent grid shape is 5x9x9')
+            return model.fit(base,target,mass,strength,iterations=iterations,device=resolve_device(),continuous=continuous)
     tools = TensorTools()
     x, desired = tools.tensor(base), tools.tensor(target)
     weights = tools.tensor(np.asarray(mass) / np.sum(mass))

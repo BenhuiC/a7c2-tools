@@ -8,7 +8,7 @@ import subprocess
 import sys
 import tempfile
 import zipfile
-from profilepack import files as profile_files, default_files
+from profilepack import files as profile_files, default_files, install_files
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -34,7 +34,7 @@ def make_windows_zip(output):
     output=Path(output).resolve()
     bundle=output/'A7C2Tools'
     target=output/'A7C2Tools-Windows-x64.zip'
-    library=default_files()
+    library=install_files()
     profiles=output/'A7C2Tools/Profiles'
     if profiles.exists():
         profiles.resolve().relative_to(bundle)
@@ -57,7 +57,14 @@ def make_windows_zip(output):
         if stale.exists():
             stale.resolve().relative_to(bundle)
             shutil.rmtree(stale)
-    with zipfile.ZipFile(target,'w',zipfile.ZIP_DEFLATED,compresslevel=1) as stream:
+    import filecmp
+    internal=bundle/'_internal'
+    duplicates={path.name for path in internal.glob('*.dll')
+                if (internal/'torch/lib'/path.name).is_file()
+                and filecmp.cmp(path,internal/'torch/lib'/path.name,shallow=False)}
+    # Rebuild a fresh archive; append-updating leaves obsolete large entries behind.
+    staging=target.with_name(target.name+'.new')
+    with zipfile.ZipFile(staging,'w',zipfile.ZIP_DEFLATED,compresslevel=6) as stream:
         for source in sorted((output/'A7C2Tools').rglob('*')):
             relative=source.relative_to(output/'A7C2Tools')
             # Users may save diagnostic ZIPs beside the executable. Never
@@ -65,9 +72,12 @@ def make_windows_zip(output):
             if relative.parts[0] not in ('A7C2Tools.exe','_internal','README.md','README.zh-CN.md','LICENSE','VERSION.txt','Looks'):continue
             if relative.parts[:3]==('_internal','desktop-assets','profile-library-v1'):continue
             if relative.parts[:3]==('_internal','desktop-assets','creative-look-library-v2'):continue
+            if relative.parts[:3]==('_internal','desktop-assets','presets'):continue
+            if len(relative.parts)==2 and relative.parts[0]=='_internal' and relative.name in duplicates:continue
             if relative.parts[0]=='Looks':continue
             if source.is_file():stream.write(source,source.relative_to(output))
         for relative,source in library.items():stream.write(source,'A7C2Tools/Profiles/'+relative)
+    staging.replace(target)
     return target
 
 
@@ -84,7 +94,7 @@ def main():
     sys.path[:0]=[str(ROOT/'src'),str(ROOT/'src/looks')]
     from desktopapp.presets import refresh_assets
     refresh_assets(ROOT)
-    (default_files if sys.platform=='win32' else profile_files)()
+    install_files()
     subprocess.run([sys.executable,'-m','PyInstaller','--noconfirm',
                     '--distpath',str(output),'--workpath',str(ROOT/'build/desktop'),
                     str(ROOT/'dev/desktop/desktop.spec')],cwd=ROOT,check=True)

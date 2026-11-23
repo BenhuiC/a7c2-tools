@@ -161,6 +161,44 @@ def default_files(root=ROOT,*,verify_pairs=True):
     return selected
 
 
+def install_files(root=ROOT):
+    """Six icon-bearing camera looks, without embedded RAW references or duplicates."""
+    import sys
+    root=Path(root)
+    sys.path[:0]=[str(ROOT/'src'),str(ROOT/'src/looks')]
+    from looktool import lookfile,looklabels
+    folder=root/'desktop-assets/presets/default-six-v1'
+    output=root/'build/desktop-install-looks'
+    output.mkdir(parents=True,exist_ok=True)
+    result={};rows=[]
+    for slot,item in enumerate(looklabels.defaults(),1):
+        source=folder/'MenuIcons'/f'slot{slot}.a7look'
+        if not source.is_file():source=folder/f'slot{slot}.a7look'
+        original=json.loads(source.read_text(encoding='utf-8'))
+        document={key:value for key,value in original.items()
+                  if key not in ('raw_profile','raw_profile_status')}
+        if document['name']!=item['name']:raise ValueError('Default look identity differs')
+        if document.get('menu_icon') is None:
+            from looktool import iconfile
+            document['menu_icon']=iconfile.from_text(item['icon_text'])
+        lookfile.writer_document(document)
+        if not document.get('edit_native') or not document.get('menu_icon'):
+            raise ValueError('Default look requires full native data and artwork')
+        name=f'slot{slot}.a7look';target=output/name
+        target.write_text(json.dumps(document,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+        result[name]=target
+        rows.append(dict(slot=slot,name=item['name'],a7look=name,menu_icon_text=item['icon_text']))
+    catalog=output/'catalog.json'
+    catalog.write_text(json.dumps(dict(schema='a7c2-install-looks/1',count=6,
+        distribution='windows-default-six-native',profiles=rows),ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+    readme=output/'README.zh-CN.md'
+    readme.write_text('# 默认六款可刷入外观\n\n'+''.join(
+        f"- 槽 {row['slot']}：{row['name']}（{row['menu_icon_text']}）\n" for row in rows)+
+        '\n六款均含完整机内外观数据和图标。RAW／DCP参考及完整41款库另行分发。\n',encoding='utf-8')
+    result.update({'catalog.json':catalog,'README.zh-CN.md':readme})
+    return result
+
+
 def archive_values(archive):
     """Read only exact library paths from exported assets or a desktop ZIP."""
     names=archive.namelist()

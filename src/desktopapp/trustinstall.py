@@ -145,7 +145,8 @@ class Installer:
 
     def run(self,*,source=None):
         self.root.mkdir(parents=True,exist_ok=False)
-        mode='trust_restore' if source else 'trust_install';self.save('PREPARING',mode=mode)
+        mode='trust_restore' if source else 'trust_install'
+        self.save('PREPARING',mode=mode,source_workspace=str(Path(source).resolve()) if source else None)
         try:
             backup_state=None
             if source:
@@ -176,12 +177,14 @@ class Installer:
             if source:
                 # Interrupted writes may leave unknown bytes only inside this job's
                 # planned sectors. Re-read them and build a separate restore request.
-                permitted=set()
-                for at,before,after in updaterimage.spans(original,old_candidate):permitted.update(range(at//512,(at+len(before))//512))
-                for at in range(0,len(original),512):
-                    if at//512 not in permitted and captured[at:at+512]!=original[at:at+512]:
-                        raise ValueError('Updater changed outside the recorded installation; preserve the current state')
-                target=original;image_report=dict(original_trust_restore=True,source_workspace=str(source))
+                target,comparison=updaterimage.restore_plan(original,old_candidate,captured)
+                self.save('BUILDING',restore_comparison=comparison)
+                if comparison['outside_sectors']:
+                    raise ValueError('当前更新器在首次授信记录范围之外发生变化：首个差异 %s，共 %d 个扇区。'
+                        '本次尚未写入更新器；请保留原始授信记录和本次失败记录，导出诊断包，不要反复恢复。'
+                        %(comparison['first_outside_difference'],comparison['outside_sectors']))
+                image_report=dict(original_trust_restore=True,source_workspace=str(source),
+                    preserved_fat_times=comparison['preserved_fat_times'])
             else:
                 _,public=signing_paths();target,image_report=updaterimage.build(original,public.read_bytes())
             durable(self.root/'candidate-updater.private.img',target)
@@ -218,9 +221,12 @@ class Installer:
             self.backend.prepare(self)
             with self.backend.session(self,state['identity']):
                 if self.backend.boot_id==state['source_boot_id']:raise ValueError('尚未观察到新的启动，请先按步骤断电重开')
-                if self.read_partition()!=Path(state['verify_image']).read_bytes():raise ValueError('重开后的更新器与安装目标不同，请保留记录')
+                expected=Path(state['verify_image']).read_bytes()
+                _,comparison=updaterimage.restore_plan(expected,expected,self.read_partition())
+                if comparison['outside_sectors']:raise ValueError('重开后的更新器与安装目标不同，请保留记录')
             self.save('LOADED',partition_readback_verified=True,new_boot_observed=True,
-                physical_tested=self.backend.camera_io,updater_boot_verified=False,reload_required=False)
+                physical_tested=self.backend.camera_io,updater_boot_verified=False,reload_required=False,
+                verify_comparison=comparison)
             return dict(self.state,workspace=str(self.root))
         except BaseException as exc:
             self.save('NEEDS_REVIEW',failed_during=self.state['phase'],error=type(exc).__name__+': '+str(exc))

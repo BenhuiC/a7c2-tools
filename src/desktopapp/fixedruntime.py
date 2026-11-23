@@ -37,6 +37,7 @@ def prepare_source(current,out,records,selected):
     parsed=fixedbank.parse(image)
     metadata=dict(schema='a7c2-fixed-look-source/1',mask=mask,slots=parsed['count'],image_bytes=len(image),
                   code_bytes=len(code),root_fields=['base','size'],generation_field=False,ready_field=False,
+                  profile_change_notification=consumers['profile_change_notification'],
                   fixed_CP=layout,consumers=consumers,exact_inverse=True,
                   activation_policy='battery removal after completed writes',live_reload_added=False,
                   ordinary_generator_default_changed=True,camera_io=False)

@@ -23,6 +23,10 @@ def _ints(value, count, low, high, label):
         raise ValueError('Invalid integer ' + label)
 
 
+def _encode_parameters(value):
+    return bytes.fromhex(value['matrix_780f_hex'])+struct.pack('<8h128I',*value['cc1_direct_raw'],*value['gamma_7806_y'])
+
+
 def parameters(value):
     if type(value) is not dict or set(value) != KEYS:
         raise ValueError('Incomplete C2 Edit parameters')
@@ -34,7 +38,7 @@ def parameters(value):
     y = value['gamma_7806_y']
     if y[0] != 0 or any(a > b for a, b in zip(y, y[1:])):
         raise ValueError('Edit Gamma must be monotone and start at zero')
-    return bytes.fromhex(encoded) + struct.pack('<8h128I', *value['cc1_direct_raw'], *y)
+    return _encode_parameters(value)
 
 
 def _decode(raw):
@@ -63,11 +67,23 @@ def validate(value):
     return before, after
 
 
-def pack(value):
-    before, after = validate(value)
+def _body(value,before,after):
     body = bytes.fromhex(value['reference_sha256'])
     body += struct.pack('<128I', *value['gamma_7805_x']) + before + after
     assert len(body) == BODY_BYTES
+    return body
+
+
+def wire_pack(value,*,validated=False):
+    # The source reference is opaque recipe metadata, never a device whitelist.
+    before,after=((_encode_parameters(value[k]) for k in ('baseline','fitted')) if validated else validate(value))
+    body=_body(value,before,after)
+    return struct.pack('<8sI',b'A7C2ED03',len(body))+body
+
+
+def pack(value):
+    before, after = validate(value)
+    body=_body(value,before,after)
     return HEADER.pack(MAGIC, len(body), zlib.crc32(body), hashlib.sha256(body).digest()) + body
 
 

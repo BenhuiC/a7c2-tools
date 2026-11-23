@@ -182,7 +182,9 @@ class GridPenalty:
 
 @lru_cache(maxsize=4)
 def _cached(serialized):
-    return GridPenalty(json.loads(serialized))
+    from measured_response import get
+    response=json.loads(serialized)
+    return NonlinearGridPenalty(response) if getattr(get(response),'nonlinear_grid',False) else GridPenalty(response)
 
 
 def get_penalty(response):
@@ -190,3 +192,37 @@ def get_penalty(response):
     if not isinstance(response, dict):
         raise ValueError('Applied-response grid penalty requires a paired response identity')
     return _cached(json.dumps(response, sort_keys=True, allow_nan=False, separators=(',', ':')))
+
+class NonlinearGridPenalty:
+    """Same fixed paths, differentiated after exact nonlinear grid application."""
+    scale=staticmethod(GridPenalty.scale)
+    cost=GridPenalty.cost
+    def __init__(self,response):
+        from measured_response import get
+        import hashlib
+        self.model=get(response);self.identity=response;self.paths=fixed_paths()
+        self.rgb,self.first,self.second=_geometry(self.paths);self._tensor={}
+        self.metadata=dict(policy='latent-preclip-path-derivatives-v1',identity=response,
+            path_count=len(self.paths),
+            rgb_samples=len(self.rgb),target_independent=True,first_rate=FIRST_RATE,curvature_rate=SECOND_RATE,
+            nonlinear=True,output='exact preclip applied correction on fixed RGB straight segments')
+    def raw_loss(self,grid):
+        correction=self.model.predict_cpu(self.rgb,np.asarray(grid).reshape(405,3),clip=False)-self.rgb
+        return float(sum(np.square(d@correction).sum() for d in (self.first,self.second)))
+    def tensor_raw_loss(self,tools,grid):
+        key=(str(tools.device),str(tools.dtype))
+        if key not in self._tensor:
+            x=tools.tensor(self.rgb);prepared=self.model.prepare_tensor(tools,x);ops=[]
+            for op in (self.first,self.second):
+                a=op.tocoo();ops.append((tools.tensor(a.row,True),tools.tensor(a.col,True),tools.tensor(a.data),op.shape[0]))
+            self._tensor[key]=(x,prepared,ops)
+        x,prepared,ops=self._tensor[key]
+        correction=self.model.apply_tensor(tools,x,grid,prepared,clip=False)-x
+        loss=grid.sum()*0
+        for row,col,value,n in ops:
+            out=tools.torch.zeros((n,3),device=x.device,dtype=x.dtype)
+            out.index_add_(0,row,correction[col]*value[:,None]);loss=loss+out.square().sum()
+        return loss
+    def tensor_loss(self,tools,grid,value):
+        scale=self.scale(value)
+        return self.tensor_raw_loss(tools,grid)*scale if scale else grid.sum()*0

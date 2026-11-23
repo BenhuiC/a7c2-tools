@@ -1,32 +1,24 @@
 /* Existing C2 records only. The wire carries masks, never paths/IDs/offsets. */
-#define I_PACKET_MAX 4317U
+#define I_PACKET_MAX 4249U
 #define I_MASK_BYTES 846U
 #if API_MENU_ICONS
-#if !API_FULL_NATIVE
-typedef uint8_t u8;typedef uint32_t u32;typedef uint64_t u64;
-#include "../fl23/native/sha256.h"
-#endif
 #define I_MAX_FILE (16U*1024U*1024U)
 struct icon_bank {
     unsigned char *before,*after;size_t size,length;
     dev_t device;ino_t inode;unsigned windows[3],count;
+    unsigned char window_after[3][8];
 };
 static struct icon_bank icon_banks[4];
 static const unsigned char *icon_masks;
 static unsigned icon_growth;
 
-static void i_hash(const unsigned char *p,size_t n,unsigned char out[32]) {
-    SHA256 h;sha_init(&h);sha_add(&h,p,(u32)n);sha_end(&h,out);
-}
 static unsigned i_u16(const unsigned char *p){return (unsigned)p[0]|(unsigned)p[1]<<8;}
 
 static int icon_unwrap(const unsigned char **data,size_t *size) {
-    if(*size<8||memcmp(*data,"A7ICLOOK",8))return 0;
-    if(*size<16+1324+I_MASK_BYTES+32)return bad("icon-packet-size");
-    unsigned n=get32(*data+8),m=get32(*data+12);unsigned char hash[32];
-    if((n!=1324&&n!=3423)||m!=I_MASK_BYTES||*size!=16U+n+m+32U)return bad("icon-packet-size");
-    i_hash(*data,*size-32,hash);
-    if(memcmp(hash,*data+*size-32,32))return bad("icon-packet-hash");
+    if(*size<8||memcmp(*data,"A7ICLK02",8))return 0;
+    if(*size<16+1324+I_MASK_BYTES)return bad("icon-packet-size");
+    unsigned n=get32(*data+8),m=get32(*data+12);
+    if((n!=1324&&n!=3387)||m!=I_MASK_BYTES||*size!=16U+n+m)return bad("icon-packet-size");
     icon_masks=*data+16+n;unsigned a=0,b=0;
     for(unsigned i=0;i<494;i++)a|=icon_masks[i];
     for(unsigned i=494;i<I_MASK_BYTES;i++)b|=icon_masks[i];
@@ -107,21 +99,14 @@ static int i_one(unsigned bank,unsigned slot) {
     if(fd<0)return bad("icon-open");
     if(fstat(fd,&st)||!S_ISREG(st.st_mode)||st.st_size<16||st.st_size>I_MAX_FILE){close(fd);return bad("icon-file-size");}
     v->size=v->length=(size_t)st.st_size;v->device=st.st_dev;v->inode=st.st_ino;
-    v->before=malloc(v->size);v->after=malloc(v->size+65536);
+    v->before=malloc(v->size);v->after=malloc(65536);
     if(!v->before||!v->after){close(fd);return bad("icon-memory");}
     if(transfer(fd,v->before,v->size,0,0)){close(fd);return -1;}close(fd);
-    memcpy(v->after,v->before,v->size);
     const unsigned char *source=v->before;
     unsigned descriptor=get32(source+12),count=descriptor&8191,base=16+((descriptor>>11)&0x7ffc);
     if(memcmp(source,"uxd\7\0\0\0\0",8)||i_u16(source+8)!=8||i_u16(source+10)!=group||
        descriptor!=(count|(((count+1)&~1U)<<12))||base>v->size||16U+2U*count>v->size)
         return bad("icon-bank-layout");
-    if(bank>=2){
-        unsigned char hash[32];
-        if(v->size<72||memcmp(source+v->size-8,"A7NP2301",8))return bad("icon-portrait-owner");
-        i_hash(source,v->size-72,hash);
-        if(memcmp(hash,source+v->size-40,32))return bad("icon-portrait-owner");
-    }
     unsigned indices[3],selected[3],compact[3],families;
     if(!group){families=3;indices[0]=0x6c5+slot-1;indices[1]=0x8ef+13*(slot-1);indices[2]=0x181a+13*(slot-1);
         selected[0]=0;selected[1]=selected[2]=1;compact[0]=compact[1]=0;compact[2]=1;
@@ -142,21 +127,12 @@ static int i_one(unsigned bank,unsigned slot) {
         memcpy(old,raw,decoded);i_paint(raw,compact[i],selected[i]);
         if(!memcmp(old,raw,decoded))continue;
         size_t n=i_encode(raw,decoded,encoded);
-        while(v->length%4)v->after[v->length++]=0;
-        if(v->length+n+76>v->size+65536||v->length+n+76>I_MAX_FILE)return bad("icon-growth");
-        put32(v->after+at+12,(uint32_t)n);put32(v->after+at+16,(uint32_t)(v->length-at-4));
-        memcpy(v->after+v->length,encoded,n);v->length+=n;v->windows[v->count++]=(unsigned)at+12;
+        while(v->length%4){v->after[v->length-v->size]=0;v->length++;}
+        if(v->length+n+4>v->size+65536||v->length+n+4>I_MAX_FILE)return bad("icon-growth");
+        put32(v->window_after[v->count],(uint32_t)n);put32(v->window_after[v->count]+4,(uint32_t)(v->length-at-4));
+        memcpy(v->after+v->length-v->size,encoded,n);v->length+=n;v->windows[v->count++]=(unsigned)at+12;
     }
-    if(bank>=2){
-        struct icon_bank *horizontal=&icon_banks[bank-2];unsigned char origin[32];
-        i_hash(horizontal->after,horizontal->length,origin);
-        if(v->count||memcmp(origin,source+v->size-72,32)){
-            while(v->length%4)v->after[v->length++]=0;
-            unsigned char hash[32];i_hash(v->after,v->length,hash);
-            memcpy(v->after+v->length,origin,32);memcpy(v->after+v->length+32,hash,32);
-            memcpy(v->after+v->length+64,"A7NP2301",8);v->length+=72;
-        }
-    }else while(v->length%4)v->after[v->length++]=0;
+    while(v->length%4){v->after[v->length-v->size]=0;v->length++;}
     icon_growth+=(unsigned)(v->length-v->size);return 0;
 }
 
@@ -171,18 +147,24 @@ static int icons_publish(void) {
     for(unsigned i=0;i<4;i++){
         struct icon_bank *v=&icon_banks[i];if(v->length==v->size&&!v->count)continue;
         char p[640];snprintf(p,sizeof p,"%s/usr/share/app/%s",root,icon_names[i]);
-        int fd=open(p,O_RDWR|O_NOFOLLOW);struct stat st;int result=-1;unsigned char check[1024];
+        int fd=open(p,O_RDWR|O_NOFOLLOW);struct stat st;int result=-1;unsigned char check[1024],expected[1024];
         if(fd<0)return bad("icon-publish-open");
         if(fstat(fd,&st)||st.st_dev!=v->device||st.st_ino!=v->inode||st.st_size!=(off_t)v->size){bad("icon-source-changed");goto done;}
         for(size_t at=0;at<v->size;){
             size_t n=v->size-at;if(n>sizeof check)n=sizeof check;
             if(transfer(fd,check,n,(off_t)at,0)||memcmp(check,v->before+at,n)){bad("icon-source-changed");goto done;}at+=n;
         }
-        if(v->length>v->size&&replace_bytes(fd,(off_t)v->size,v->after+v->size,v->length-v->size))goto done;
-        for(unsigned j=0;j<v->count;j++)if(replace_bytes(fd,v->windows[j],v->after+v->windows[j],8))goto done;
+        if(v->length>v->size&&replace_bytes(fd,(off_t)v->size,v->after,v->length-v->size))goto done;
+        for(unsigned j=0;j<v->count;j++)if(replace_bytes(fd,v->windows[j],v->window_after[j],8))goto done;
         for(size_t at=0;at<v->length;){
             size_t n=v->length-at;if(n>sizeof check)n=sizeof check;
-            if(transfer(fd,check,n,(off_t)at,0)||memcmp(check,v->after+at,n)){bad("icon-readback");goto done;}at+=n;
+            if(at<v->size&&n>v->size-at)n=v->size-at;
+            memcpy(expected,at<v->size?v->before+at:v->after+at-v->size,n);
+            for(unsigned j=0;j<v->count;j++)for(unsigned k=0;k<8;k++){
+                size_t field=(size_t)v->windows[j]+k;
+                if(field>=at&&field-at<n)expected[field-at]=v->window_after[j][k];
+            }
+            if(transfer(fd,check,n,(off_t)at,0)||memcmp(check,expected,n)){bad("icon-readback");goto done;}at+=n;
         }
         result=0;
 done:close(fd);if(result)return result;
@@ -195,7 +177,7 @@ static void icons_close(void){for(unsigned i=0;i<4;i++){free(icon_banks[i].befor
 static const unsigned char *icon_masks;
 static unsigned icon_growth;
 static int icon_unwrap(const unsigned char **data,size_t *size){
-    return *size>=8&&!memcmp(*data,"A7ICLOOK",8)?bad("icon-api-unavailable"):0;
+    return *size>=8&&!memcmp(*data,"A7ICLK02",8)?bad("icon-api-unavailable"):0;
 }
 static int icons_prepare(unsigned slot){(void)slot;return 0;}
 static int icons_publish(void){return 0;}

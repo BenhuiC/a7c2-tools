@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,6 +32,12 @@ static const char *mounts[]={"/setting","/cp","/usr"};
 static int remounted[3];
 static unsigned long mount_flags[3];
 static int bad(const char *why){error=why;return -1;}
+static int protect_transaction(void){
+    struct sigaction action={.sa_handler=SIG_IGN};sigemptyset(&action.sa_mask);
+    if(sigaction(SIGHUP,&action,NULL)||sigaction(SIGTERM,&action,NULL)||sigaction(SIGPIPE,&action,NULL))
+        return bad("transaction-signal-setup");
+    return 0;
+}
 static void path(char *out,size_t size,const char *suffix){snprintf(out,size,"%s%s",root,suffix);}
 static uint32_t get32(const unsigned char *p){return p[0]|p[1]<<8|p[2]<<16|(uint32_t)p[3]<<24;}
 static int get16(const unsigned char *p){return (int16_t)(p[0]|p[1]<<8);}
@@ -44,7 +51,12 @@ static int replace_bytes(int fd,off_t at,const void *data,size_t size) {
     if(undo_record(fd,at,size))return -1;
     unsigned char check[1024];if(transfer(fd,(void*)data,size,at,1)||fsync(fd))return bad("write");
     const unsigned char *p=data;
-    while(size){size_t n=size<sizeof(check)?size:sizeof(check);if(transfer(fd,check,n,at,0)||memcmp(check,p,n))return bad("readback");size-=n;p+=n;at+=n;}return 0;
+    while(size){size_t n=size<sizeof(check)?size:sizeof(check);if(transfer(fd,check,n,at,0)||memcmp(check,p,n))return bad("readback");size-=n;p+=n;at+=n;}
+#ifdef CAMERA_API_TEST
+    const char *signal_at=getenv("A7C2_API_SIGNAL_AT");
+    if(signal_at&&strtoul(signal_at,NULL,10)==undo_count){raise(SIGHUP);raise(SIGTERM);}
+#endif
+    return 0;
 }
 static int writable(int index) {
     char p[640];path(p,sizeof(p),mounts[index]);struct statvfs s;
@@ -86,20 +98,29 @@ static int read_state(char *state,char *id,char *operation) {
     char p[640];path(p,sizeof(p),"/setting/a7c2-api.task");FILE *f=fopen(p,"r");if(!f){if(errno==ENOENT)return 0;return bad("task-read");}
     int n=fscanf(f,"%31s %39s %31s",state,id,operation);fclose(f);return n==3?1:bad("task-read");
 }
+static int state_snapshot(char *state,char *op,int *restarted) {
+    char saved[40],current[40],lock[640];int n=read_state(state,saved,op);if(n<0)return -1;
+    *restarted=0;
+    if(!n){strcpy(state,"idle");op[0]=0;}
+    else {if(boot_id(current))return -1;*restarted=strcmp(saved,current)!=0;
+        if(!strcmp(state,"pending_reload")&&*restarted)strcpy(state,"active");}
+    path(lock,sizeof lock,"/tmp_wbshd/a7c2-resource-update.lock");
+    if(!access(lock,F_OK)){if(strcmp(state,"failed"))strcpy(state,"running");}
+    else if(!strcmp(state,"running"))strcpy(state,"failed");
+    return 0;
+}
 static int task(void) {
-    char state[32],saved[40],op[32],current[40];int n=read_state(state,saved,op);if(n<0)return -1;
-    if(!n){puts("{\"state\":\"idle\"}");return 0;}if(boot_id(current))return -1;
-    if(!strcmp(state,"running"))strcpy(state,"failed");
-    if(!strcmp(state,"pending_reload")&&strcmp(saved,current))strcpy(state,"active");
+    char state[32],op[32];int restarted;if(state_snapshot(state,op,&restarted))return -1;
+    if(!op[0]){printf("{\"state\":\"%s\"}\n",state);return 0;}
     /* A new Linux boot identity is only an observation, not CP/cache proof. */
     printf("{\"state\":\"%s\",\"operation\":\"%s\"",state,op);
-    if(!strcmp(op,"look"))printf(",\"restart_method\":\"battery_removal\",\"runtime_verified\":false,\"restart_observed\":%s",strcmp(saved,current)?"true":"false");
+    if(!strcmp(op,"look"))printf(",\"restart_method\":\"battery_removal\",\"runtime_verified\":false,\"restart_observed\":%s",restarted?"true":"false");
     puts("}");return 0;
 }
-static int ready(void) {
+static int ready(int look) {
     char state[32],saved[40],op[32],current[40];int n=read_state(state,saved,op);if(n<0)return -1;if(!n)return 0;
     if(!strcmp(state,"running")||!strcmp(state,"failed"))return bad("previous-result-unknown");if(boot_id(current))return -1;
-    if(!strcmp(state,"pending_reload")&&!strcmp(saved,current))return bad("pending-reload");return 0;
+    if(!look&&!strcmp(state,"pending_reload")&&!strcmp(saved,current))return bad("pending-reload");return 0;
 }
 static int name_file(const char *filename,int slot,const char *name,int writing) {
     char p[640];snprintf(p,sizeof(p),"%s/usr/share/app/%s",root,filename);int fd=open(p,writing?O_RDWR:O_RDONLY);
@@ -186,12 +207,29 @@ done:
 #endif
 }
 static int sound_current(int fd) {
-    unsigned char table[5],gate[SOUND_GATE_SIZE],front[2],mechanical[2];
+    unsigned char table[5],gate[SOUND_GATE_SIZE],front[2],mechanical[2],variant[4];
     if(transfer(fd,table,5,sound_table_offset,0)||transfer(fd,gate,sizeof(gate),sound_gate_offset,0)
-       ||transfer(fd,front,2,sound_front_offset,0)||transfer(fd,mechanical,2,sound_mechanical_offset,0))return -1;
+       ||transfer(fd,front,2,sound_front_offset,0)||transfer(fd,mechanical,2,sound_mechanical_offset,0)
+       ||transfer(fd,variant,4,sound_variant_offset,0))return -1;
+    if(memcmp(variant,sound_variant_before,4)&&memcmp(variant,sound_variant_after,4))return bad("sound-layout");
     if((memcmp(front,sound_front,2)&&memcmp(front,sound_front_before,2))||
        (memcmp(mechanical,sound_mechanical,2)&&memcmp(mechanical,sound_mechanical_before,2)))return bad("sound-layout");
     for(unsigned i=0;i<sound_states;i++)if(!memcmp(table,sound_tables[i],5)&&!memcmp(gate,sound_gates[i],sizeof(gate)))return sound_flags[i];return bad("sound-layout");
+}
+static int sound_shutdown_fix(int apply) {
+    char p[640];unsigned char code[64];path(p,sizeof p,"/usr/lib/appFw.so");
+    if(apply&&writable(2))return -1;
+    int fd=open(p,apply?O_RDWR|O_NOFOLLOW:O_RDONLY|O_NOFOLLOW);
+    if(fd<0)return bad("ap-open");int result=-1;
+    for(unsigned i=0;i<sizeof(sound_lifecycle_edits)/sizeof(sound_lifecycle_edits[0]);i++){
+        const struct sound_ap_edit *e=&sound_lifecycle_edits[i];
+        if(e->size>sizeof code||transfer(fd,code,e->size,e->offset,0))goto done;
+        if(!memcmp(code,e->after,e->size))continue;
+        if(memcmp(code,e->before,e->size)&&(!e->previous||memcmp(code,e->previous,e->size))){bad("sound-shutdown-layout");goto done;}
+        if(apply&&replace_bytes(fd,e->offset,e->after,e->size))goto done;
+    }
+    result=0;
+done:close(fd);return result;
 }
 static int sound_switch(int selection,int enabled) {
     if(writable(1))return -1;int fd=cp_open();if(fd<0)return bad("cp-open");int result=-1,current=sound_current(fd);if(current<0)goto done;
@@ -202,31 +240,64 @@ static int sound_switch(int selection,int enabled) {
 done:close(fd);return result;
 }
 struct audio_row {unsigned present,file,size,offset;};
-static const char *audio_names[]={"custom-shutter.bin","custom-shutter-a.bin","custom-shutter-b.bin"};
+#define AUDIO_ROWS 15
+static int audio_kind(unsigned kind){return (kind>=1&&kind<=3)||(kind>=10&&kind<=15);}
+static void mechanical_variants(struct audio_row *rows){
+    if(!rows[0].present)return;
+    for(unsigned kind=10;kind<=15;kind++)rows[kind-1]=rows[kind<=12?1:0];
+}
 static int audio_config(struct audio_row *rows) {
     char p[640],line[512];path(p,sizeof(p),"/usr/share/avsystemsound/custom.txt");FILE *f=fopen(p,"r");if(!f)return errno==ENOENT?0:bad("audio-config");
     while(fgets(line,sizeof(line),f)) {
         if(strncmp(line,"CUSTOM,",7))continue;unsigned kind,size,offset;char name[64];
-        if(sscanf(line,"CUSTOM,0x%X,APP,%63[^,],0x%X,0x%X,",&kind,name,&size,&offset)!=4||kind<1||kind>3||!size||size>51200||offset>51200-size||size%64||offset%64){fclose(f);return bad("audio-config");}
+        if(sscanf(line,"CUSTOM,0x%X,APP,%63[^,],0x%X,0x%X,",&kind,name,&size,&offset)!=4||!audio_kind(kind)||!size||size>51200||offset>51200-size||size%64||offset%64){fclose(f);return bad("audio-config");}
         unsigned file;for(file=0;file<3;file++)if(!strcmp(name,audio_names[file]))break;
         if(file==3||rows[kind-1].present){fclose(f);return bad("audio-config");}rows[kind-1]=(struct audio_row){1,file,size,offset};
     }
     int result=ferror(f)?bad("audio-config"):0;fclose(f);
-    if(rows[0].present!=rows[1].present)return bad("audio-config");return result;
+    if(rows[0].present!=rows[1].present)return bad("audio-config");
+    if(rows[0].present&&(rows[0].offset||rows[1].file!=rows[0].file||rows[1].size!=64||rows[1].offset!=rows[0].size))return bad("audio-config");
+    for(unsigned kind=10;kind<=15;kind++)if(rows[kind-1].present){
+        struct audio_row *expected=&rows[kind<=12?1:0];
+        if(!expected->present||memcmp(&rows[kind-1],expected,sizeof(*expected)))return bad("audio-config");
+    }
+    if(rows[2].present&&rows[2].offset)return bad("audio-config");
+    mechanical_variants(rows);return result;
+}
+static int publish_audio_config(struct audio_row *rows) {
+    char csv[1536];size_t at=(size_t)snprintf(csv,sizeof csv,"\n/* START */\n/usr/share/avsystemsound/\n");
+    for(int i=0;i<AUDIO_ROWS;i++)if(rows[i].present){int n=snprintf(csv+at,sizeof(csv)-at,"CUSTOM,0x%04X,APP,%s,0x%X,0x%X,AA_RT,6,%X,0,0,0\n",i+1,audio_names[rows[i].file],rows[i].size,rows[i].offset,i+1);
+        if(n<0||(size_t)n>=sizeof(csv)-at)return bad("audio-config-size");at+=(size_t)n;}
+    memcpy(csv+at,"/* END */\n",10);at+=10;
+    if(undo_snapshot_file(name_count+8)||undo_replace_file(name_count+8,(unsigned char*)csv,at,0))return -1;
+    return 0;
 }
 static int install_audio(int selection,unsigned char *audio,size_t length,struct audio_row *rows) {
-    unsigned file;for(file=0;file<3;file++){int used=0;for(int i=0;i<3;i++)if(rows[i].present&&rows[i].file==file)used=1;if(!used)break;}
+    unsigned file;for(file=0;file<3;file++){int used=0;for(int i=0;i<AUDIO_ROWS;i++)if(rows[i].present&&rows[i].file==file)used=1;if(!used)break;}
     if(file==3)return bad("audio-space");if(writable(2))return -1;
-    char p[640];snprintf(p,sizeof(p),"%s/usr/share/avsystemsound/%s",root,audio_names[file]);int fd=open(p,O_RDWR|O_CREAT|O_TRUNC,0644);if(fd<0)return bad("audio-open");
-    size_t stored=length;if(selection&1){memset(audio+length,0,64);stored+=64;}int ok=replace_bytes(fd,0,audio,stored);close(fd);if(ok)return -1;
+    size_t stored=length;if(selection&1){memset(audio+length,0,64);stored+=64;}
+    if(undo_snapshot_file(name_count+5+file)||undo_replace_file(name_count+5+file,audio,stored,0))return -1;
     if(selection&1){rows[0]=(struct audio_row){1,file,length,0};rows[1]=(struct audio_row){1,file,64,length};}
     if(selection&2)rows[2]=(struct audio_row){1,file,length,0};
-    path(p,sizeof(p),"/usr/share/avsystemsound/.a7c2-api.csv");FILE *f=fopen(p,"w");if(!f)return bad("audio-config-write");
-    fputs("\n/* START */\n/usr/share/avsystemsound/\n",f);
-    for(int i=0;i<3;i++)if(rows[i].present)fprintf(f,"CUSTOM,0x%04X,APP,%s,0x%X,0x%X,AA_RT,6,%d,0,0,0\n",i+1,audio_names[rows[i].file],rows[i].size,rows[i].offset,i+1);
-    fputs("/* END */\n",f);ok=fflush(f)||fsync(fileno(f));if(fclose(f))ok=1;if(ok)return bad("audio-config-write");
-    char target[640];path(target,sizeof(target),"/usr/share/avsystemsound/custom.txt");if(rename(p,target))return bad("audio-publish");return 0;
+    mechanical_variants(rows);
+    if(rows[0].present){
+        if(writable(1))return -1;int fd=cp_open();if(fd<0)return bad("cp-open");
+        int result=replace_bytes(fd,sound_variant_offset,sound_variant_after,4);close(fd);if(result)return -1;
+    }
+    return publish_audio_config(rows);
 }
+static int reset_audio(int selection,struct audio_row *rows){
+    if(selection!=3)return bad("arguments");
+    if(writable(2)||publish_audio_config((struct audio_row[AUDIO_ROWS]){{0}})||writable(1))return -1;
+    int fd=cp_open();if(fd<0)return bad("cp-open");
+    int result=replace_bytes(fd,sound_table_offset,sound_tables[4],5)||
+        replace_bytes(fd,sound_gate_offset,sound_gates[4],SOUND_GATE_SIZE)||
+        replace_bytes(fd,sound_front_offset,sound_front_before,2)||
+        replace_bytes(fd,sound_mechanical_offset,sound_mechanical_before,2)||
+        replace_bytes(fd,sound_variant_offset,sound_variant_before,4);
+    close(fd);return result?-1:0;
+}
+
 int main(int argc,char **argv) {
 #ifdef CAMERA_API_TEST
     root=getenv("A7C2_TEST_ROOT");if(!root)return 2;
@@ -240,9 +311,10 @@ int main(int argc,char **argv) {
     unsigned char small[1324],*data=small;
 #endif
     if(argc==2&&!strcmp(argv[1],"info")) {
+        char state[32],op[32];int restarted;if(state_snapshot(state,op,&restarted))goto answer;
         printf("{\"slots\":[");int comma=0;for(int i=0;i<6;i++)if(slot_mask&(1<<i)){printf("%s%d",comma?",":"",i+1);comma=1;}
-        printf("],\"sound\":[%s],\"sound_operations\":[%s],\"native_photo\":%s,\"menu_icons_protocol\":%u,\"look_storage\":\"%s\",\"live_reload\":%s,\"look_activation\":\"battery_removal\"}\n",sound_available?"\"mechanical\",\"electronic\",\"both\"":"",
-            !sound_available?"":custom_audio_available?"\"on\",\"off\",\"custom\"":"\"on\",\"off\"",photo_available?"true":"false",(unsigned)API_MENU_ICONS,API_FIXED_BANK?"cp-fixed-v1":"cp-static","false");return 0;
+        printf("],\"state\":\"%s\",\"operation\":\"%s\",\"api_protocol\":2,\"native_look_protocol\":2,\"sound\":[%s],\"sound_operations\":[%s],\"native_photo\":%s,\"menu_icons_protocol\":%u,\"look_storage\":\"%s\",\"live_reload\":%s,\"look_activation\":\"battery_removal\",\"sound_loader_max_buffers\":%u}\n",state,op,sound_available?"\"mechanical\",\"electronic\",\"both\"":"",
+            !sound_available?"":custom_audio_available?"\"on\",\"off\",\"custom\",\"reset\"":"\"on\",\"off\"",photo_available?"true":"false",(unsigned)API_MENU_ICONS,API_FIXED_BANK?"cp-fixed-v1":"cp-static","false",custom_audio_available?2U:0U);return 0;
     }
     if(argc==2&&!strcmp(argv[1],"task")){result=task();goto answer;}
 #if API_FIXED_BANK
@@ -252,8 +324,9 @@ int main(int argc,char **argv) {
     if(argc==5&&!strcmp(argv[1],"readback")){result=rb_read(argv+2);goto answer;}
     if(argc==3&&!strcmp(argv[1],"undo")){result=rb_undo(argv[2]);goto answer;}
     if(argc==3&&!strcmp(argv[1],"result")){result=rb_result(argv[2]);goto answer;}
+    int reset_sound=argc==4&&!strcmp(argv[1],"sound")&&!strcmp(argv[3],"reset");
     int is_look=argc==4&&!strcmp(argv[1],"look"),selection=0,custom=0,enabled=0,slot=0;
-    size_t size=0;struct audio_row rows[3]={{0}};
+    size_t size=0;struct audio_row rows[AUDIO_ROWS]={{0}};
     if(is_look) {
         char *end;long value=strtol(argv[2],&end,10);if(*end||value<1||value>6||!(slot_mask&(1<<(value-1)))){bad("slot");goto answer;}slot=value;
         size_t length=strlen(argv[3]);if(!length||length>63){bad("name");goto answer;}
@@ -277,7 +350,7 @@ int main(int argc,char **argv) {
     } else if(argc==4&&!strcmp(argv[1],"sound")&&sound_available) {
         selection=!strcmp(argv[2],"mechanical")?1:!strcmp(argv[2],"electronic")?2:!strcmp(argv[2],"both")?3:0;
         custom=!strcmp(argv[3],"custom");enabled=!strcmp(argv[3],"on");
-        if(!selection||(!custom&&!enabled&&strcmp(argv[3],"off"))){bad("arguments");goto answer;}
+        if(!selection||(!custom&&!enabled&&!reset_sound&&strcmp(argv[3],"off"))){bad("arguments");goto answer;}
         if(custom){
             if(!custom_audio_available){bad("custom-unavailable");goto answer;}
             data=malloc(51200);if(!data){data=small;bad("memory");goto answer;}
@@ -285,6 +358,7 @@ int main(int argc,char **argv) {
             for(size_t i=0;i<size;i+=32)if(data[i]>8){bad("audio-codec");goto answer;}
         }
     } else {bad("arguments");goto answer;}
+    if(protect_transaction())goto answer;
     char p[640];path(p,sizeof(p),"/tmp_wbshd/a7c2-resource-update.lock");
     if(mkdir(p,0700)){bad("busy");goto answer;}
 #define CHECK_FILE(file,bytes,rows) check_file(file,bytes,rows,sizeof(rows)/sizeof(rows[0]))
@@ -293,13 +367,14 @@ int main(int argc,char **argv) {
     if(!checked&&!is_look){char cp[640];path(cp,sizeof(cp),"/cp/cpapp-b.bin");int fd=open(cp,O_RDONLY);
         if(fd<0)checked=bad("cp-open");else{checked=sound_current(fd)<0;close(fd);}}
     if(!checked&&custom)checked=CHECK_FILE("/usr/lib/appFw.so",ap_file_size,custom_ap_guards);
-    if(!checked&&custom)checked=audio_config(rows);
-    if(!checked)checked=ready();
+    if(!checked&&!is_look&&custom_audio_available)checked=sound_shutdown_fix(0);
+    if(!checked&&(custom||reset_sound))checked=audio_config(rows);
+    if(!checked)checked=ready(is_look);
 #if API_FIXED_BANK
     if(!checked&&is_look)checked=fixed_prepare(slot,data,size);
 #endif
     if(!checked&&is_look)for(unsigned i=0;i<name_count;i++)if(name_file(name_files[i],slot,argv[3],0)){checked=1;break;}
-    unsigned journal_bytes=icon_masks?200000:128;
+    unsigned journal_bytes=icon_masks?200000:(custom||reset_sound)?110000:1024;
 #if API_FIXED_BANK
     if(is_look)journal_bytes+=FIXED_BYTES+32768;
 #endif
@@ -307,11 +382,14 @@ int main(int argc,char **argv) {
         space_for(0,journal_bytes,2,(icon_masks||(API_FIXED_BANK&&is_look))?2:1)||
         (is_look&&space_for(2,72*name_count+icon_growth,name_count+4,0))||
         (custom&&space_for(2,53248,2,2))||writable(0)){rmdir(p);goto answer;}
-    if((icon_masks||(API_FIXED_BANK&&is_look))&&undo_begin()){rmdir(p);goto cleanup;}
+    if(undo_begin(custom||reset_sound)){rmdir(p);goto cleanup;}
     if(save_state("running",argv[1])){rmdir(p);goto cleanup;}
+    if(!is_look&&custom_audio_available&&sound_shutdown_fix(1)){result=-1;goto operation_done;}
     if(is_look)result=install_look(slot,argv[3],data,size);
     else if(custom){if(!install_audio(selection,data,size,rows))result=sound_switch(selection,1);}
+    else if(reset_sound)result=reset_audio(selection,rows);
     else result=sound_switch(selection,enabled);
+operation_done:
     if(!result&&is_look)result=icons_publish();
 #if API_FIXED_BANK
     if(!result&&is_look)result=fixed_publish();
@@ -361,7 +439,7 @@ answer:
         else printf("{\"state\":\"failed\",\"error\":\"%s\"}\n",error);
     }else if(argc!=2&&strcmp(argv[1],"readback")&&strcmp(argv[1],"undo")&&strcmp(argv[1],"result")){
         const char *restart=!strcmp(argv[1],"look")?",\"reload_required\":true,\"restart_method\":\"battery_removal\",\"live_reload\":false,\"runtime_verified\":false":"";
-        if(icon_masks||API_FIXED_BANK)printf("{\"state\":\"pending_reload\",\"menu_icons\":%s,\"undo\":\"%s\"%s}\n",icon_masks?"true":"false",strrchr(undo_path,'/')+1,restart);
+        if(undo_path[0])printf("{\"state\":\"pending_reload\",\"menu_icons\":%s,\"undo\":\"%s\"%s}\n",icon_masks?"true":"false",strrchr(undo_path,'/')+1,restart);
         else printf("{\"state\":\"pending_reload\"%s}\n",restart);
     }
     return result?1:0;

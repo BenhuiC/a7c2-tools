@@ -14,6 +14,7 @@ NORMALIZE=0x2614d4c
 # Zero entries represent the original hidden/unknown icon result.
 PLAYBACK_NATIVE=(0x713,0x714,0x719,0,0,0,0x71e,0,0,0,0,0,0x715,0,0,0,0,
                  0x71f,0x2262,0x2261,0x2263,0x2260,0x4aaf,0x4ac7)
+STATUS_ICON_OFFSETS=(0x23e319c,0x23e31b8,0x23e3210)
 def asm(lines,at,size=None):
     b=bytes(K.asm(';'.join(lines),addr=at)[0])
     if size is not None:
@@ -34,6 +35,35 @@ def fixed_converter(mask):
         'add w0,w3,#249','b store','legacy:cmp w1,#11','b.hi 0x3528874',
         'adrp x0,0x4c7c000','add x0,x0,#0xf7c','ldrb w0,[x0,w1,uxtw]',
         'store:strb w0,[x2]','ret','special:mov w0,#-1','b store'],0x35287f0,80)
+
+def status_icons(mask):
+    """Keep the live status icon tied to the fixed slot, not its ST base.
+
+    Reuse the original current-setting lookup and existing compact artwork.
+    Factory/automatic looks retain the original table and visibility gates.
+    All instructions remain inside translator_icon_auto_customize_creative_look.
+    """
+    assert type(mask) is int and 0<=mask<64
+    # The original table is read-only; replacing its stack copy frees the
+    # dispatch space without moving any code or changing a resource record.
+    table=asm(['adrp x25,0x41b0000','add x25,x25,#0x5a8',
+        'b 0x23e31b8'],0x23e319c,28)
+    dispatch=asm(['bl 0x23e3210','cmn w0,#1','b.ne 0x23e31f4',
+        'ldr w0,[x19,#0x20]','cmp w0,#12','b.hi 0x23e3268',
+        'b 0x23e31e0'],0x23e31b8,40)
+    # This internal fragment uses x21, already saved by the enclosing native
+    # function, so its original stack frame and unwind description stay valid.
+    current=asm(['mov x21,x30',
+        'mov w0,#0x5e4','bl 0x1b6bb2c',
+        'sub w1,w0,#0x7f8','cmp w1,#5','b.hi absent',
+        f'mov w0,#{mask}','lsr w0,w0,w1','tbz w0,#0,absent',
+        'ldr w2,[x19,#0x50]','cmp w2,#0x5e4',
+        'mov w0,#0x33a3','add w0,w0,w1','b.ne publish',
+        'mov w0,#0x181a','mov w2,#13','madd w0,w1,w2,w0',
+        'publish:movk w0,#0x200,lsl #16','b finish',
+        'absent:mov w0,#-1',
+        'finish:ret x21'],0x23e3210,88)
+    return dict(zip(STATUS_ICON_OFFSETS,(table,dispatch,current)))
 
 def code(mask):
     assert type(mask) is int and 0<=mask<64
@@ -106,4 +136,4 @@ def code(mask):
     playback_mode=asm(['b.eq 0x23d1dbc'],0x23d1d14,4)
     return {PREDICATE:predicate, CLASSIFY:classify, SETTER:setter+normalize,
         0x287ee10:getter,0x21b1290:parameter,0x21b1434:layout,
-        0x23d1d14:playback_mode,0x23d1da4:playback}
+        0x23d1d14:playback_mode,0x23d1da4:playback,**status_icons(mask)}

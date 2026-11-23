@@ -13,9 +13,13 @@ NOP=bytes.fromhex('00bf')
 # for legacy writers that deliberately run without the optional assembler.
 READER_ENTRY=bytes.fromhex('0eb549f64031c0f2')
 VENEER_ENTRY=bytes.fromhex('dff800f04d007002')
+PROFILE_CHANGE_HOOK=0x23FFD4
+PROFILE_CHANGE_VENEER=0xC2FEF0
+PROFILE_CHANGE_RETURN=0x23FFDA
+PROFILE_CHANGE_ORIGINAL=bytes.fromhex('00268cf80760')
 
 
-def generate():
+def generate(*,profile_change_notification=True):
     from keystone import Ks,KS_ARCH_ARM,KS_MODE_THUMB,KS_MODE_V8
     k=Ks(KS_ARCH_ARM,KS_MODE_THUMB|KS_MODE_V8)
     def asm(lines,at):return bytes(k.asm(';'.join(lines),addr=at)[0])
@@ -89,21 +93,59 @@ def generate():
              'msr APSR_nzcvq,ip','pop {ip,lr}',*jump(BASE+lo+4,'table_return')])
         near,_=veneer('table_'+str(index),target)
         sites.append(dict(low=lo,high=hi,register=reg,target=target,veneer=near))
+    if profile_change_notification:
+        # All custom looks retain native ST profile IDs. Notify the original
+        # chroma producer when their source changes, so it does not slew from
+        # the previous look while matrix/grid already use the new one.
+        changed=add('profile_changed',[
+            'push {r0,r1,r2,r3,r4,r5,r7,lr}','mrs r7,apsr',
+            'movs r0,#0','strb r0,[ip,#7]',
+            'ldrb r0,[ip,#1]','cmp r0,#0','bne finish',
+            'ldr r0,[fp]','cmp r0,#0','beq finish',
+            'ldrb r1,[r0,#1]','cmp r1,#1','bhi finish',
+            'ldrb.w r0,[r0,#0x2e]','subs r0,#249',
+            *literal('r1',ROOT_VA),'ldr r1,[r1]','cmp r1,#0','beq finish',
+            'cmp r0,#5','bhi leaving',
+            'ldr r2,[r1,#4]','cmp r0,r2','bhs leaving',
+            'ldr r2,[r1,#8]','lsr.w r2,r2,r0','tst r2,#1','beq leaving',
+            f'addw r1,r1,#{bank.DIRECTORY_OFFSET}','add.w r1,r1,r0,lsl #4',
+            'ldr r0,[r1]','ldr.w r1,[ip,#0x184]','cmp r0,r1','beq finish',
+            'b changed',
+            # On returning to ST, the native grid producer clears this source
+            # later in the same update. Reuse it; do not add history fields.
+            'leaving:','ldr.w r3,[ip,#0x184]','cmp r3,#0','beq finish',
+            'ldr r5,[r1,#4]','cmp r5,#6','it hi','movhi r5,#6',
+            f'addw r4,r1,#{bank.DIRECTORY_OFFSET}',
+            'scan:','cmp r5,#0','beq finish','ldr r2,[r4]','cmp r2,r3','beq changed',
+            'adds r4,#16','subs r5,#1','b scan',
+            'changed:','movs r0,#1','strb r0,[ip,#7]',
+            'finish:','msr APSR_nzcvq,r7','pop {r0,r1,r2,r3,r4,r5,r7,lr}',
+            'movs r6,#0',*jump(PROFILE_CHANGE_RETURN,'profile_change_return')])
+        _,change_stub=veneer('profile_changed',changed,at=PROFILE_CHANGE_VENEER)
     _,grid_stub=veneer('grid_checker',checker,at=CHECKER)
     if START+len(low)>END or len(grid_stub)>CHECKER_END-CHECKER:
         raise ValueError('Fixed reader veneers exceed the previously owned text window')
-    patches={START-BASE:bytes(low)+NOP*((END-START-len(low))//2),
+    low_payload=bytearray(bytes(low)+NOP*((END-START-len(low))//2))
+    if profile_change_notification:
+        at=PROFILE_CHANGE_VENEER-START
+        if at<len(low) or at+len(change_stub)>len(low_payload):
+            raise ValueError('Profile-change veneer overlaps an existing consumer')
+        low_payload[at:at+len(change_stub)]=change_stub
+    patches={START-BASE:bytes(low_payload),
              CHECKER-BASE:grid_stub+NOP*((CHECKER_END-CHECKER-len(grid_stub))//2),
              0xB27500:asm([f'b.w {gselector}'],0xC2F500),
              0x6492E4:asm([f'b.w {pstub}'],BASE+0x6492E4),
              0x64963C:asm([f'b.w {sstub}'],BASE+0x64963C),
              0x64836C:asm([f'bl {mstub}'],BASE+0x64836C)}
+    if profile_change_notification:
+        patches[PROFILE_CHANGE_HOOK-BASE]=asm([f'b.w {PROFILE_CHANGE_VENEER}','nop'],PROFILE_CHANGE_HOOK)
     for site in sites:
         patches[site['low']]=asm([f'b.w {site["veneer"]}'],BASE+site['low'])
         patches[site['high']]=NOP*2
     return bytes(code),patches,dict(labels=labels,table_sites=sites,veneers=veneers,
         code_base=CODE_START,code_bytes=len(code),root=ROOT_VA,root_bytes=8,
         native_update_exit_preserved=[CHECKER_END,0xC2FFB0],native_slots=6,
+        profile_change_notification=profile_change_notification,
         ready_field=False,generation_field=False,malloc=False)
 
 
@@ -118,6 +160,9 @@ def prepare(cp):
     for item in old['hooks']:
         at=item['offset'];raw=bytes.fromhex(item['after'])
         if cp[at:at+len(raw)]!=raw:raise ValueError('Existing look hook differs at '+hex(at))
+    at=PROFILE_CHANGE_HOOK-BASE
+    if cp[at:at+len(PROFILE_CHANGE_ORIGINAL)]!=PROFILE_CHANGE_ORIGINAL:
+        raise ValueError('Native profile-change instructions differ')
     code,patches,info=generate();out=bytearray(cp);windows=[]
     if legacy:
         at=photobuild.DATA_FILE
@@ -150,7 +195,11 @@ def present(cp):
 def inspect(cp):
     from .fixedlayout import DATA_START
     from .fixedregion import SOURCE_CODE_START,SOURCE_DATA_START
-    code,patches,info=generate()
+    # Existing installed fixed-layout firmware remains usable by API writers.
+    # Only the recognized original clear or the new notification path is valid.
+    at=PROFILE_CHANGE_HOOK-BASE
+    notification=cp[at:at+len(PROFILE_CHANGE_ORIGINAL)]!=PROFILE_CHANGE_ORIGINAL
+    code,patches,info=generate(profile_change_notification=notification)
     for at,raw in patches.items():
         if cp[at:at+len(raw)]!=raw:
             raise ValueError('Fixed look consumer differs at '+hex(at))
@@ -161,4 +210,5 @@ def inspect(cp):
     image=bank.extract_cp(cp);parsed=bank.parse(image)
     return dict(revision='cp-fixed-v1',fixed=True,count=parsed['count'],mask=parsed['mask'],
                 source_offset=SOURCE_DATA_START,image_bytes=len(image),
-                base=DATA_START,size=DATA_BYTES,code_bytes=info['code_bytes'])
+                base=DATA_START,size=DATA_BYTES,code_bytes=info['code_bytes'],
+                profile_change_notification=notification)

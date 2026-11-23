@@ -44,10 +44,6 @@ def run(action,args):
         if not args.get('power_confirmed') and args.get('battery') is None:
             raise ValueError('Confirm power (or give the battery percentage) before a sound write')
         argv += ['--power-confirmed'] if args.get('power_confirmed') else ['--battery-percent', str(args['battery'])]
-    elif command == 'confirm':
-        argv += ['--result', args.get('result', 'correct')]
-    elif command == 'verify' and args.get('accepted'):
-        argv += ['--heard-correct']
     outcome, stopped = {}, []
     code = main(argv, report=outcome.update, failure=stopped.append)
     if code:
@@ -77,5 +73,5 @@ def converted_file(workspace,name='custom-native.private.bin'):
         state=json.loads((root/'sound.private.json').read_text(encoding='utf-8'))
     folder=selected_conversion(root,state)
     if not folder or not (Path(folder)/name).is_file():
-        raise ValueError('请先导入并转换片段，或生成示例音效。')
+        raise ValueError('请先导入并转换片段。')
     return Path(folder)/name
