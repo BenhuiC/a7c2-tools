@@ -1,76 +1,31 @@
 {
-  "schema": "r5-formal-training-profile/1",
-  "name": "C2 native12-grid5-stack3 / provided nonlinear response",
-  "runtime": "amd",
-  "web": "http://127.0.0.1:4180/",
-  "batch": null,
+  "schema": "c2-native-first-training-profile/1",
+  "name": "C2 mean-DE00 native-first monotone-S-Gamma",
   "settings": {
     "rounds": 3,
     "native_evaluations": 120,
     "grid_evaluations": 180,
-    "rounding_steps": 80,
-    "block_budget": 64,
-    "hue_direction_strength": 30,
-    "derivative_strength": 0.02,
-    "exact_de00_gradient": true,
-    "gamma_frozen": true,
-    "adaptive_rounding": true,
-    "joint_integer_search": true
+    "grid_rounds": 5,
+    "integer_node_budget": 16,
+    "native_integer_sweeps": 3,
+    "grid_output_weight": 0.01,
+    "grid_node_weight": 0.001,
+    "gamma_frozen": false,
+    "objective": "mean-CIEDE2000"
   },
-  "baseline": "C2 native12 with provided raw-differential-20261118; existing C2-probe comparison recorded",
-  "hue_direction_strength": 30,
-  "derivative_strength": 0.02,
-  "gamma": "frozen during stacked three rounds",
-  "selection": "validation fixed color loss; parent included",
-  "status": "ready",
   "options": {
-    "evaluations": 2000,
-    "speed_priority": false,
-    "pc_compensation": true,
-    "compression_training": true,
-    "white_balance": false,
-    "post_gray_refinement": false,
-    "compression_objective": "fuji-target",
-    "pc_options": {
-      "curve_mode": "tone-tint",
-      "grid_enabled": true,
-      "response": {
-        "schema": "r5-measured-grid-response/1",
-        "preset": "provided-raw-differential-20261118",
-        "model": "ILCE-7CM2"
-      }
+    "group_weights": {
+      "random": 8.0,
+      "primaries": 0.25,
+      "gray": 0.5,
+      "colorchecker24": 0.25,
+      "sector16": 0.25
     },
     "search_options": {
-      "starts": 12,
-      "adaptive_rounds": 8,
-      "perceptual_weight": 0.35,
-      "quantization_sweeps": 3,
-      "parameter_smoothing": 0.0,
-      "output_continuity": 0.0,
-      "target_neighborhood": 0.0,
-      "hue_direction_strength": 0.0,
-      "target_polish_rounds": 2,
-      "postfit_deburr": false,
-      "gamma_monotone_concave": true,
-      "gamma_global_correction": true,
-      "gamma_color_recovery": true,
-      "native_strict_stopping": true,
-      "gamma_color_rounds": 3,
       "primary_tonal_weight": 1.0,
       "hue24_tonal_weight": 1.0
-    },
-    "group_weights": {
-      "random": 1.0,
-      "primaries": 1.0,
-      "gray": 1.0,
-      "colorchecker24": 1.0
-    },
-    "gamma_endpoint128": 131071,
-    "target_kind": "chart-image",
-    "compressed_alternation_rounds": 0,
-    "dataset_id": "v4.5-sony100mp-5300k-sim-center5-20261029"
+    }
   },
-  "backend": "AMD ROCm/PyTorch",
-  "batch_concurrency": 3,
-  "cpu_threads": 10
+  "selection": "validation mean DeltaE00 plus weak grid penalty; previous included; test never selects",
+  "gamma": "128 original nonuniform nodes; monotone, unrestricted curvature; existing C2 expanded legality"
 }

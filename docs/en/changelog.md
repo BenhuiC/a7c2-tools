@@ -1,5 +1,7 @@
 # Changelog
 
+- Development: mean-DE00 native-first fitting, monotone S-capable Gamma and four local Fuji refits; archives/cloud remain unchanged.
+
 - Restore the original-trust buttons in First Trust/Advanced Settings, allow completed public-key installation to repeat, and preserve the original same-body backup. Correct card-recovery completion guidance to manual 2.01 flashing.
 
 ## 3.10 release preparation — 2026-11-23

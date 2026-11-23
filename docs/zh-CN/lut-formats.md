@@ -1,5 +1,7 @@
 # LUT / DCP 格式与色彩空间
 
+开发版拟合已改为平均CIEDE2000、允许非凹单调Gamma、原生参数优先及轻量残差网格。/2文件布局、菜单图标与配套DCP输出保持兼容；当前分发包和云端仍使用此前拟合器。
+
 [首页](../../README.zh-CN.md) · [English](../en/lut-formats.md)
 
 **桌面与云端转换器现支持明确选择输入／输出曲线和色域，不再仅限 sRGB。** 网站与手机 App 共用 remote-win 的独立计算队列，桌面 EXE 可离线计算。都生成同名 A7Look 与 DCP，默认使用带菜单图标的 `a7c2-creative-look/2`。

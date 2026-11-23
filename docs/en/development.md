@@ -1,5 +1,25 @@
 # Development guide
 
+## Mean-DE00 native-first fitting (2026-11-23)
+
+Development source now uses one mean CIEDE2000 data objective for continuous
+native fitting, native/grid integer refinement and candidate scoring. It fits
+Gamma/CC1/block13 before the residual grid, then jointly refines all four.
+Gamma keeps the original 128-node axis, monotonicity, integer encoding and C2
+expanded-table checks; curvature can change sign. Broad color samples carry
+most training mass, with smaller explicit gray/primary/chart/sector anchors.
+The same weak grid-output and node-magnitude penalties enter validation choice.
+RGB RMSE remains a diagnostic, not the data objective.
+
+Four local Fuji refits use the same original targets and provided November 18
+operator. On 19,909 validation points, mean DE00 changes CC 2.054→0.960,
+Classic Negative 2.362→1.274, Velvia 2.519→1.671 and Eterna 1.932→0.902.
+Grid-node RMS falls 14–43%; P99/max DE00 also improve. Velvia's RGB RMSE rises.
+These are chart/model results, not physical color acceptance. Only these four
+local library entries and the two matching defaults change; other looks and DCP
+references stay intact. Distribution archives and the cloud converter have not
+been updated by this development change. A7Look /2 and the camera ABI stay unchanged.
+
 ## Repeatable trust installation (2026-11-23)
 
 First Trust, the installation guide and Advanced Settings expose Restore Trust
@@ -100,7 +120,7 @@ Version stays 3.10. Windows packages only the default six rows from the `/2`
 paired-profile catalog. The complete 41-pair collection stays separate for Sony
 cloud distribution; do not bundle it in Windows or increment the version. Keep DCP,
 ordinary A7Look, artwork companion and embedded source bytes in agreement.
-Native 3.0.5 coefficients remain unchanged. `looktool/dcpexport.py` reuses the
+The native payload format remains unchanged. `looktool/dcpexport.py` reuses the
 project's camera-specific DCP authoring construction and the bundled Sony
 Camera ST calibration for new CUBE companions; it does not install a camera
 loader or write a device. The CLI and desktop adapter return both output paths.
@@ -719,7 +739,7 @@ The desktop's unified custom Save carries `sound_target=mechanical/electronic/bo
 
 **Native portrait candidate:** `desktopapp.vertical_native` first retires legacy portrait edits through the existing inverse and asks for a cold reload. `verticaltool.nativeportrait` then builds independent `_23` image banks at the original IDs, using current body images and the existing drawn portrait shapes; it leaves `_32` horizontal banks and AP drawing code original. `resourceworker` admits only the three fixed bank paths and checks loaded original AP windows before copying; its native worker also requires the runtime display switch OFF for mutations. `verticalpersist.Stage` recognizes complete or partial managed files for disabling/restoration. Factory recovery releases these files before restoring voice audio, so the reclaimed voice space is available again. One-click setup pauses before its program/LUT phase if legacy migration needs a cold reload. This is an offline-tested candidate; it has not been physically accepted.
 
-**Look conversion:** `compilelook.py` evaluates DCP/CUBE targets and `compilehybrid.py` calls `looktool/r5fit`. The current adapter follows the author-supplied 2026-11-22 portable source and November 18 nonlinear response: 12 starts / 2000 evaluations, 8 adaptive rounds, 3 integer sweeps, target-polish parameter 2, up to 5 target-grid rounds and 3 frozen-Gamma stacked rounds. These are formal configuration values; their effect follows the original implementation. Old deburring is disabled by default. C2 builders, source splits and Gamma admissibility projection remain. No upstream digest gate is introduced. See [LUT formats](lut-formats.md).
+**Previous fitting pipeline (2026-11-22):** `compilelook.py` evaluates DCP/CUBE targets and `compilehybrid.py` calls `looktool/r5fit`. That adapter followed the author-supplied 2026-11-22 portable source and November 18 nonlinear response: 12 starts / 2000 evaluations, 8 adaptive rounds, 3 integer sweeps, target-polish parameter 2, up to 5 target-grid rounds and 3 frozen-Gamma stacked rounds. These are formal configuration values; their effect follows the original implementation. Old deburring is disabled by default. C2 builders, source splits and Gamma admissibility projection remain. No upstream digest gate is introduced. See [LUT formats](lut-formats.md).
 
 Operator coefficients match the supplied November 18 JSON. Latent inference, integer refinement, target-grid and principal native optimization functions were compared with the portable source. On the existing 2899-point C2 development probes, floating RGB8 train/validation/historical-test RMSE changes from 0.714/1.007/1.624 for old Hybrid to 0.551/0.593/0.623. This is not a fresh C2 calibration, independent scene test or physical camera qualification. The shared cloud converter and current Windows runtime are updated; older distribution archives have not been rebuilt.
 

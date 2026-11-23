@@ -107,7 +107,7 @@ def main(argv=None):
         p.error('Companion DCP already contains different data; choose another output path')
     raw_profile=rawidentity.descriptor(profile_source,name)
     raw_profile['source_filename']=source_filename
-    print('C2 nonlinear: native %d starts → up to five target-grid rounds → three stacked rounds. Offline CPU fitting.'%a.passes,flush=True)
+    print('C2 mean DeltaE00: native-first %d starts → residual grid → joint Gamma/CC1/block13 refinement. Offline fitting.'%a.passes,flush=True)
     params,table,report=r5fit.fit(target,work/'fit-hybrid',evaluations=a.evaluations,starts=a.passes,calibration=response)
     edit=copy.deepcopy(json.loads((r5fit.ROOT/'data/template.json').read_text(encoding='utf-8')))
     edit['fitted']=params;editrecipe.validate(edit)
@@ -119,7 +119,7 @@ def main(argv=None):
     if cube:report['reference_contract']=dict(contract,automatic_Adobe_profile_generated=generated_report is not None)
     a.output.parent.mkdir(parents=True,exist_ok=True)
     dcpexport.publish(profile_source,companion)
-    lookfile.write(a.output,name,table,method='C2-native12-grid5-stack3-raw-differential-20261118',
+    lookfile.write(a.output,name,table,method=r5fit.COMMIT,
         attribution='Owner-provided reference; Hearts-Ace numerical optimizer adapted to C2',metrics=report,
         edit_native=edit,raw_profile=raw_profile,source_reference=source_reference,menu_icon=icon)
     print('Created '+str(a.output.resolve()),flush=True)

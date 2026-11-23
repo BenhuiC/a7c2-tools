@@ -180,7 +180,7 @@ def refine_grid(grid, base, target, gate, weights, sweeps=1, perceptual_weight=0
                                       objective='train weighted uint8 RGB MSE + perceptual_weight*(2.55*DE00)^2',perceptual_weight=perceptual_weight)
 
 
-def refine_native(ctx, parameters, inputs, target, weights, pc_bundle, sweeps=1, perceptual_weight=0, progress=None, parameter_smoothing=0, output_penalty=None, target_neighborhood=None):
+def refine_native(ctx, parameters, inputs, target, weights, pc_bundle, sweeps=1, perceptual_weight=0, progress=None, parameter_smoothing=0, output_penalty=None, target_neighborhood=None, objective_rows=None):
     """Exact integer CC1, all 96 block13 coefficients and 127 nonzero Gamma nodes.
 
     PC is frozen during moves and rebuilt when the resulting candidate is assessed.
@@ -195,7 +195,8 @@ def refine_native(ctx, parameters, inputs, target, weights, pc_bundle, sweeps=1,
         rgb=center_mean(render_native(ctx.build(**p),inputs))/16383
         if pc_bundle is not None:rgb=pc_stages.render(rgb,pc_bundle[0],pc_bundle[1])
         from parameter_smoothing import native_cost
-        return (float(display_cost_rows(rgb,target,perceptual_weight)@weights/np.sum(weights))
+        values=display_cost_rows(rgb,target,perceptual_weight)if objective_rows is None else objective_rows(rgb,target)
+        return (float(values@weights/np.sum(weights))
             +(native_cost(p,ctx.axis,parameter_smoothing) if parameter_smoothing else 0)
             +(output_penalty(p) if output_penalty is not None else 0)
             +(target_neighborhood(p,pc_bundle) if target_neighborhood is not None else 0))
@@ -236,7 +237,7 @@ def refine_native(ctx, parameters, inputs, target, weights, pc_bundle, sweeps=1,
         if not changed:break
     return current,dict(original_before_export_roundtrip=original_cost,before=before,after=best,accepted=accepted,evaluations=calls,sweeps=sweeps,
                         gamma_concavity=(shape.audit_even(current['gamma_y']) if shape is not None else None),
-                        objective='train weighted floating RGB MSE + continuous DE00 squared on integer native outputs; frozen PC',
+                        objective=('shared native data objective on integer outputs'if objective_rows is not None else 'train weighted floating RGB MSE + continuous DE00 squared on integer native outputs; frozen PC'),
                         output_continuity=output_penalty is not None,
                         target_neighborhood=target_neighborhood is not None,
                         gamma_zero_fixed=True,gamma_monotone=True,export_roundtrip='4.18 half-unit Gamma and CC1 gains')

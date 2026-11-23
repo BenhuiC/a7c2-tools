@@ -1,5 +1,7 @@
 # LUT / DCP formats and color spaces
 
+Development fitting now uses mean CIEDE2000, a monotone Gamma with unrestricted curvature, native-first fitting and a small residual grid. The existing /2 file layout, menu icons and paired DCP output are unchanged. Current distribution archives/cloud still use the preceding fitter.
+
 [Home](../../README.md) · [简体中文](../zh-CN/lut-formats.md)
 
 **The desktop and cloud converter now offer explicit input/output transfer functions and gamuts, beyond sRGB.** The website and mobile apps share an independent remote-win computation queue; the EXE runs offline. Each conversion produces an A7Look/DCP pair, with the latest `a7c2-creative-look/2` and an embedded menu icon by default.
