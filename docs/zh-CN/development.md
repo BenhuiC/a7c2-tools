@@ -1,6 +1,6 @@
 # 开发说明
 
-手动触发 `macos-native.yml` 时，Apple Silicon 和 Intel 分别在原生 runner 上打包。请选择包含六个默认预设和分发用 SSH 资源的分支。Intel 产物为 `A7C2Tools-macOS-x86_64.dmg`。两个架构的构建均沿用原有 macOS 工作流的固件签名身份。
+手动触发 `macos-native.yml` 时，默认在原生 runner 上分别打包 Apple Silicon 和 Intel。选择 `x86_64` 可只构建 `A7C2Tools-macOS-x86_64.dmg`。请选择包含六个默认预设和分发用 SSH 资源的分支。打包任务沿用原有 macOS 工作流的固件签名身份。Intel 任务为 `cryptography` 启用构建隔离并静态链接 OpenSSL，以便 PyPI 缺少 Intel wheel 时从源码构建。
 
 ## 3.11 custom-look migration (2026-11-24)
 

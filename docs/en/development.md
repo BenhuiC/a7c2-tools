@@ -1,6 +1,6 @@
 # Development guide
 
-The manually dispatched `macos-native.yml` packages both Apple Silicon and Intel on native runners. Select a ref containing the six default looks and distribution SSH assets. Intel produces `A7C2Tools-macOS-x86_64.dmg`. Both jobs use the existing macOS distribution signing identity for firmware.
+The manually dispatched `macos-native.yml` defaults to packaging both Apple Silicon and Intel on native runners. Select `x86_64` to build only `A7C2Tools-macOS-x86_64.dmg`. Select a ref containing the six default looks and distribution SSH assets. The jobs use the existing macOS distribution signing identity for firmware. The Intel job installs `cryptography` with build isolation and static OpenSSL so it can fall back to a source build when PyPI has no Intel wheel.
 
 ## 3.11 custom-look migration (2026-11-24)
 
