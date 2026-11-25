@@ -2,6 +2,8 @@
 
 ## 3.11
 
+Added an Intel x86_64 build to the manual macOS packaging workflow.
+
 Fixed a known custom-look bug.
 
 ## 3.10 stable release · Changes since 3.0.3 (2026-11-24)

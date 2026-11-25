@@ -1,5 +1,7 @@
 # Development guide
 
+The manually dispatched `macos-native.yml` packages both Apple Silicon and Intel on native runners. Select a ref containing the six default looks and distribution SSH assets. Intel produces `A7C2Tools-macOS-x86_64.dmg`. Both jobs use the existing macOS distribution signing identity for firmware.
+
 ## 3.11 custom-look migration (2026-11-24)
 
 Fixed-look migration restores the native Gamma record load and both native Gamma calls before replacing the retired adapter code. Both legacy native-photo and full-record sources use precomputed fixed-bank curves. Release regression covers no looks, neutral slots, defaults, legacy looks, mixed types and a single selected slot crossed with factory, electronic, mechanical and both audio selections; original Gamma instructions and native record pointers are checked. These local and packaged tests do not establish physical cold-boot acceptance.
@@ -784,7 +786,7 @@ The root `conftest.py` blocks physical USB enumeration in every test. Other suit
 
 Outputs:
 - **Windows:** `dist/A7C2Tools-Windows-x64.zip`. It contains `A7C2Tools.exe`, `_internal/`, `Profiles/` (paired library), both READMEs and `LICENSE`.
-- **macOS (Apple Silicon only):** `dist/A7C2Tools-macOS-arm64.dmg`. The paired library lives inside the app (`desktop-assets/profile-library-v1`).
+- **macOS:** `dist/A7C2Tools-macOS-arm64.dmg` (Apple Silicon) or `dist/A7C2Tools-macOS-x86_64.dmg` (Intel). The paired library lives inside the app (`desktop-assets/profile-library-v1`).
 - `profilepack.py` refuses to package unless all 11 Fujifilm and 4 Ricoh color pairs are present. Monochrome pairs are allowed only if they meet the independent error limits (MAE ≤3/255, P95 ≤12/255).
 
 CI: `.github/workflows/desktop-preview.yml` builds on native Windows and `macos-15` runners and uploads artifacts without publishing a Release. Updating `dev/desktop/native-build-request.json` triggers an Apple Silicon build. Keystone/Unicorn build from source on ARM64 (Xcode CLT, CMake 3.31.6); Zig is 0.13.0.

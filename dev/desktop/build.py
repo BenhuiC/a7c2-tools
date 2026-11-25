@@ -86,8 +86,8 @@ def main():
     parser.add_argument('--output',type=Path,default=ROOT/'dist')
     args=parser.parse_args()
     if sys.platform not in ('win32','darwin'):raise RuntimeError('Build on native Windows or macOS')
-    if sys.platform=='darwin' and platform.machine()!='arm64':
-        raise RuntimeError('macOS packaging supports Apple Silicon only; Intel builds are not provided')
+    if sys.platform=='darwin' and platform.machine() not in ('arm64', 'x86_64'):
+        raise RuntimeError('Unsupported macOS build architecture: ' + platform.machine())
     output=args.output.resolve();output.mkdir(parents=True,exist_ok=True)
     from profilepack import refresh_labels
     refresh_labels(ROOT)

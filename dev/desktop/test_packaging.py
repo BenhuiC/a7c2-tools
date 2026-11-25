@@ -150,7 +150,8 @@ def test_mono_pairs_are_excluded_as_pairs_when_quality_is_insufficient(tmp_path)
     assert len([name for name in files if name.endswith('.a7look')])==15
 
 
-def test_dmg_has_fresh_staging_and_arch_specific_filename(tmp_path):
+@pytest.mark.parametrize("arch", ["arm64", "x86_64"])
+def test_dmg_has_fresh_staging_and_arch_specific_filename(tmp_path, arch):
     app=tmp_path/'A7C2Tools.app';app.mkdir();(app/'file').write_bytes(b'app')
     old=tmp_path/'dmg-contents';old.mkdir();(old/'stale').write_bytes(b'stale')
     def command(args,**kwargs):
@@ -159,10 +160,10 @@ def test_dmg_has_fresh_staging_and_arch_specific_filename(tmp_path):
             assert sorted(p.name for p in stage.iterdir())==['A7C2Tools.app','Applications']
             Path(args[-1]).write_bytes(b'dmg')
     def symlink(path,target,**kwargs):path.write_text(str(target))
-    with patch.object(build.platform,'machine',return_value='arm64'), \
+    with patch.object(build.platform,'machine',return_value=arch), \
             patch.object(build.subprocess,'run',side_effect=command) as run, \
             patch.object(Path,'symlink_to',symlink):
         result=build.make_dmg(tmp_path)
-    assert result.name=='A7C2Tools-macOS-arm64.dmg'
+    assert result.name==f'A7C2Tools-macOS-{arch}.dmg'
     assert not list(tmp_path.glob('a7c2-dmg-*'))
     assert run.call_args.args[0]==['hdiutil','verify',str(result)]

@@ -1,5 +1,7 @@
 # 开发说明
 
+手动触发 `macos-native.yml` 时，Apple Silicon 和 Intel 分别在原生 runner 上打包。请选择包含六个默认预设和分发用 SSH 资源的分支。Intel 产物为 `A7C2Tools-macOS-x86_64.dmg`。两个架构的构建均沿用原有 macOS 工作流的固件签名身份。
+
 ## 3.11 custom-look migration (2026-11-24)
 
 固定外观迁移在覆盖旧适配器代码前恢复原厂 Gamma 记录读取及两处调用；旧式 native_photo 和完整记录来源都读取固定区内预先生成的曲线。发布回归覆盖不选外观、空白六槽、默认六款、旧式自选、混合类型和单槽，并交叉原厂、电子、机械及双选音效，检查原厂 Gamma 指令和实际记录指针。离线与包内测试不代表实机冷启动验收。
@@ -605,7 +607,7 @@ python desktop.py
 
 产物：
 - **Windows**：`dist/A7C2Tools-Windows-x64.zip`，包含 `A7C2Tools.exe`、`_internal/`、`Profiles/`（配对库）、两份 README 和 `LICENSE`。
-- **macOS（仅 Apple Silicon）**：`dist/A7C2Tools-macOS-arm64.dmg`，配对库在 APP 内部（`desktop-assets/profile-library-v1`）。
+- **macOS**：Apple Silicon 为 `dist/A7C2Tools-macOS-arm64.dmg`，Intel 为 `dist/A7C2Tools-macOS-x86_64.dmg`，配对库在 APP 内部（`desktop-assets/profile-library-v1`）。
 - `profilepack.py` 要求富士 11 组、理光彩色 4 组配对全部齐全，否则拒绝打包。黑白配对只有满足独立误差标准（MAE ≤3/255、P95 ≤12/255）才能加入。
 
 CI：`.github/workflows/desktop-preview.yml` 在原生 Windows 和 `macos-15` runner 上构建并上传产物，不发布 Release。修改 `dev/desktop/native-build-request.json` 会触发 Apple Silicon 构建。ARM64 上 Keystone／Unicorn 从源码编译（需要 Xcode 命令行工具和 CMake 3.31.6）；Zig 版本为 0.13.0。
