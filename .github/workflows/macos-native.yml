@@ -1,11 +1,25 @@
 name: Current macOS 3.11 package
 on:
   workflow_dispatch:
+  push:
+    branches: [codex/intel-macos-ci]
+    paths: ['.github/workflows/macos-native.yml']
 permissions:
   contents: read
 jobs:
+  intel-runner-check:
+    name: Intel macOS runner check
+    if: github.event_name == 'push'
+    runs-on: macos-15-intel
+    timeout-minutes: 5
+    steps:
+      - name: Verify native Intel architecture
+        run: |
+          uname -m
+          test "$(uname -m)" = x86_64
   package:
     name: macOS ${{ matrix.arch }}
+    if: github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
