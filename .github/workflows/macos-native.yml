@@ -40,6 +40,16 @@ jobs:
       A7C2_DISTRIBUTION_IDENTITY: ${{ github.workspace }}/../application-identity
     steps:
       - uses: actions/checkout@v4
+      - name: Download default six looks for Intel fork builds
+        if: matrix.arch == 'x86_64' && github.repository == 'BenhuiC/a7c2-tools'
+        run: |
+          archive="$RUNNER_TEMP/a7c2-default-six-v1.zip"
+          curl --fail --location --retry 3 --max-time 60 --silent --show-error \
+            --output "$archive" \
+            'https://github.com/BenhuiC/a7c2-tools/releases/download/build-assets-v1/a7c2-default-six-v1.zip'
+          printf '%s  %s\n' ecc54e3a55338f3916b188c4994d6829f94d197c44295dec0efd5309418780a3 "$archive" | shasum -a 256 --check
+          mkdir -p desktop-assets/presets
+          unzip -q "$archive" -d desktop-assets/presets
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
