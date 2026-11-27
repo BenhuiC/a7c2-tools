@@ -37,11 +37,11 @@ jobs:
       MACOSX_DEPLOYMENT_TARGET: '14.0'
       PYTHONDONTWRITEBYTECODE: '1'
       PYTHONUNBUFFERED: '1'
-      A7C2_DISTRIBUTION_IDENTITY: ${{ github.workspace }}/../application-identity
+      A7C2_OFFLINE_TEST_PACKAGE: ${{ matrix.arch == 'x86_64' && github.repository == 'BenhuiC/a7c2-tools' && '1' || '0' }}
     steps:
       - uses: actions/checkout@v4
       - name: Download default six looks for Intel fork builds
-        if: matrix.arch == 'x86_64' && github.repository == 'BenhuiC/a7c2-tools'
+        if: env.A7C2_OFFLINE_TEST_PACKAGE == '1'
         run: |
           archive="$RUNNER_TEMP/a7c2-default-six-v1.zip"
           curl --fail --location --retry 3 --max-time 60 --silent --show-error \
@@ -50,6 +50,23 @@ jobs:
           printf '%s  %s\n' ecc54e3a55338f3916b188c4994d6829f94d197c44295dec0efd5309418780a3 "$archive" | shasum -a 256 --check
           mkdir -p desktop-assets/presets
           unzip -q "$archive" -d desktop-assets/presets
+      - name: Stage SSH assets for the offline Intel test package
+        if: env.A7C2_OFFLINE_TEST_PACKAGE == '1'
+        run: |
+          archive="$RUNNER_TEMP/a7c2-upstream-v3.11-windows.zip"
+          curl --fail --location --retry 2 --max-time 600 --silent --show-error \
+            --output "$archive" \
+            'https://github.com/QAQLeonard/a7c2-tools/releases/download/v3.11/A7C2Tools-Windows-x64.zip'
+          mkdir -p desktop-assets/ssh
+          cd desktop-assets/ssh
+          unzip -p "$archive" 'A7C2Tools/_internal/desktop-assets/ssh/dropbear' > dropbear
+          unzip -p "$archive" 'A7C2Tools/_internal/desktop-assets/ssh/dropbear-LICENSE.txt' > dropbear-LICENSE.txt
+          shasum -a 256 --check <<'SHA256'
+          bc184647a2bb52084abdab79aa607fe56ca88520e97777a9553550a5717099b3  dropbear
+          a99ce657d790b761c132ee7e0de18edb437ae6361e536d991c6a12f36e770445  dropbear-LICENSE.txt
+          SHA256
+          chmod 755 dropbear
+          printf '!\n' > password.hash
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -67,7 +84,9 @@ jobs:
           python -m pip install cmake==3.31.6 setuptools==80.9.0 setuptools-scm==8.3.1 wheel==0.45.1 backports.tarfile==1.2.0
           python -m pip install --no-build-isolation -r desktop-requirements.txt pyinstaller==6.16.0 pytest==8.3.5
       - name: Restore existing application signing identity
+        if: env.A7C2_OFFLINE_TEST_PACKAGE != '1'
         env:
+          A7C2_DISTRIBUTION_IDENTITY: ${{ github.workspace }}/../application-identity
           FIRMWARE_SIGNING_PRIVATE: ${{ secrets.FIRMWARE_SIGNING_PRIVATE }}
         run: |
           python - <<'PY'
@@ -107,7 +126,8 @@ jobs:
       - name: Mac host and package contracts
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -m pytest -q -p no:cacheprovider -p no:faulthandler dev/desktop/test_macos_host.py dev/desktop/test_macadmin.py dev/desktop/test_macos_binary.py dev/desktop/test_compiler_cache.py
+          PYTHONPATH: src:src/looks:src/shutter_sound
+        run: python -m pytest -q -p no:cacheprovider -p no:faulthandler dev/desktop/test_macos_host.py dev/desktop/test_macadmin.py dev/desktop/test_macos_binary.py dev/desktop/test_compiler_cache.py dev/desktop/test_install_guide_layout.py
       - name: Native shutter variants and saved selection contracts
         env:
           QT_QPA_PLATFORM: offscreen
@@ -118,8 +138,12 @@ jobs:
       - name: Packaged app checks without camera or screenshots
         run: |
           app="$PWD/dist/A7C2Tools.app/Contents/MacOS/A7C2Tools"
-          lipo -verify_arch "$EXPECTED_ARCH" "$app"
+          lipo "$app" -verify_arch "$EXPECTED_ARCH"
           test -s "dist/A7C2Tools-macOS-$EXPECTED_ARCH.dmg"
+          if [ "$A7C2_OFFLINE_TEST_PACKAGE" = '1' ]; then
+            test -z "$(find dist/A7C2Tools.app -name firmware.private.pem -print)"
+            test "$(cat dist/A7C2Tools.app/Contents/Resources/desktop-assets/ssh/password.hash)" = '!'
+          fi
           mkdir "$RUNNER_TEMP/synthetic-images"
           dd if=/dev/zero of="$RUNNER_TEMP/synthetic-images/usr.img" bs=1048576 count=8
           "$(brew --prefix e2fsprogs)/sbin/mke2fs" -t ext2 -O none -F "$RUNNER_TEMP/synthetic-images/usr.img"
@@ -165,7 +189,7 @@ jobs:
         run: python dev/desktop/run_packaged_matrix.py --app dist/A7C2Tools.app/Contents/MacOS/A7C2Tools --source "$RUNNER_TEMP/official-input/BODYDATA.DAT" --workspace "$RUNNER_TEMP/composition-matrix"
       - uses: actions/upload-artifact@v4
         with:
-          name: A7C2Tools-macOS-${{ matrix.arch }}-3.11
+          name: A7C2Tools-macOS-${{ matrix.arch }}-3.11${{ env.A7C2_OFFLINE_TEST_PACKAGE == '1' && '-offline-test' || '' }}
           path: dist/A7C2Tools-macOS-${{ matrix.arch }}.dmg
           if-no-files-found: error
       - uses: actions/upload-artifact@v4

@@ -642,7 +642,9 @@ class Window(W.QMainWindow):
         self.firmware_config_notice=W.QLabel(reloadguide.PREFLASH_SETTINGS+
             '已授信的机身只需写配置；卡刷包沿用原厂设置迁移，不在更新末尾执行额外配置脚本。'
             '竖屏显示通过刷前配置启用，不增加机内开关菜单。')
-        self.firmware_config_notice.setWordWrap(True);layout.addWidget(self.firmware_config_notice)
+        self.firmware_config_notice.setWordWrap(True)
+        self.firmware_config_notice.setSizePolicy(W.QSizePolicy.Preferred,W.QSizePolicy.Minimum)
+        layout.addWidget(self.firmware_config_notice)
         layout.addSpacing(6)
         self.button(layout,'生成本地固件候选（不访问相机）','firmware_build',self.firmware_args,primary=True)
         layout.addStretch()

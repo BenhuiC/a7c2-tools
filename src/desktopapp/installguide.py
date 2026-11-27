@@ -11,6 +11,8 @@ class StepStack(W.QWidget):
         super().__init__();self._pages=[];self._index=0
         layout=W.QVBoxLayout(self);layout.setContentsMargins(0,0,0,0)
         layout.setSpacing(0);layout.setAlignment(QtCore.Qt.AlignTop)
+        # Publish the current pane's full minimum height to the outer scroll area.
+        layout.setSizeConstraint(W.QLayout.SetMinimumSize)
 
     def addWidget(self,page):
         self.layout().addWidget(page);self._pages.append(page)

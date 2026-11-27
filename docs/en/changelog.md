@@ -6,6 +6,10 @@ Added an Intel x86_64 build to the manual macOS packaging workflow.
 
 Fixed a known custom-look bug.
 
+Fixed the installation guide clipping custom-look rows and controls when the form grew.
+
+Fixed the packaged Intel Mac Zig compiler crashing during offline firmware generation with SSH enabled.
+
 ## 3.10 stable release · Changes since 3.0.3 (2026-11-24)
 
 - Add local firmware generation, First Trust and pre-flash settings using official 2.01 input. Windows needs no WSL; macOS skips driver installation. Builds use the selected output directory and replace matching build files.

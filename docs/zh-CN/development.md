@@ -2,6 +2,10 @@
 
 手动触发 `macos-native.yml` 时，默认在原生 runner 上分别打包 Apple Silicon 和 Intel。选择 `x86_64` 可只构建 `A7C2Tools-macOS-x86_64.dmg`。请选择包含六个默认预设和分发用 SSH 资源的分支。打包任务沿用原有 macOS 工作流的固件签名身份。Intel 任务为 `cryptography` 启用构建隔离并静态链接 OpenSSL，以便 PyPI 缺少 Intel wheel 时从源码构建。
 
+在 Intel macOS 上，Zig 0.13.0 可执行文件保持原始字节，由应用外层签名覆盖其所在的资源目录。对该 Mach-O 文件单独签名可能覆盖代码段的起始字节。包内自检使用随包附带的编译器编译 Wi-Fi 接收组件，覆盖固件生成使用的静态 AArch64 Linux 编译路径。
+
+`BenhuiC/a7c2-tools` 的 Intel 任务生成离线测试产物。它使用已发布的六款预设，校验从上游 v3.11 取得的 Dropbear 程序和许可证，并使用禁用的 SSH 密码验证数据。固件自检在包外生成临时签名身份。
+
 ## 3.11 custom-look migration (2026-11-24)
 
 固定外观迁移在覆盖旧适配器代码前恢复原厂 Gamma 记录读取及两处调用；旧式 native_photo 和完整记录来源都读取固定区内预先生成的曲线。发布回归覆盖不选外观、空白六槽、默认六款、旧式自选、混合类型和单槽，并交叉原厂、电子、机械及双选音效，检查原厂 Gamma 指令和实际记录指针。离线与包内测试不代表实机冷启动验收。

@@ -73,6 +73,12 @@ def run():
         engine().executable(root/'desktop-assets/ssh/dropbear')
         assert (root/'desktop-assets/ssh/password.hash').is_file()
         assert (root/'desktop-assets/ssh/dropbear-LICENSE.txt').is_file()
+        from desktopapp.sshboot import build_wifi_receiver
+        from importlib.util import find_spec
+        zig = Path(next(iter(find_spec('ziglang').submodule_search_locations))) / 'zig'
+        with tempfile.TemporaryDirectory(prefix='a7c2-mac-wifi-') as folder:
+            receiver = build_wifi_receiver(Path(folder) / 'wifi-ssh', zig=zig)
+            engine().executable(receiver)
         import runpy
         runpy.run_path(str(root/'dev/desktop/offline_smoke.py'))['check_firmware_packaging']()
         from desktopapp import trustworker
@@ -87,7 +93,8 @@ def run():
         assert RSA.import_key(private.read_bytes()).public_key().n==RSA.import_key(public.read_bytes()).n
         return dict(version=VERSION,steps=3,driver_step=False,default_looks=6,
                     native_image_tools=True,synthetic_image_edit=True,image_tool_minimum_macos='14.0',native_compile=True,numerical_library=True,
-                    signing_identity=True,camera_ssh_assets=True,camera_io=False,screenshots=False)
+                    signing_identity=True,camera_ssh_assets=True,wifi_receiver_compile=True,
+                    camera_io=False,screenshots=False)
     finally:
         view.process=None;view.close();view.deleteLater();app.processEvents()
 

@@ -1,5 +1,6 @@
 from pathlib import Path
 import os
+import platform
 import sys
 from PyInstaller.utils.hooks import collect_all
 
@@ -34,9 +35,10 @@ for package in ('numpy', 'scipy', 'PIL', 'tifffile', 'yaml', 'elftools', 'usb',
 # The owner requested an application signing identity; keep it outside Git and
 # add it only to this local distribution. It is never placed in camera images.
 sys.path.insert(0,str(root/'src'))
-from desktopapp.identity import ensure_signing
-identity_dir=Path(os.environ.get('A7C2_DISTRIBUTION_IDENTITY',str(root.parent/'application-identity')))
-for identity_file in ensure_signing(identity_dir):datas.append((str(identity_file),'desktop-assets/identity'))
+if os.environ.get('A7C2_OFFLINE_TEST_PACKAGE') != '1':
+    from desktopapp.identity import ensure_signing
+    identity_dir=Path(os.environ.get('A7C2_DISTRIBUTION_IDENTITY',str(root.parent/'application-identity')))
+    for identity_file in ensure_signing(identity_dir):datas.append((str(identity_file),'desktop-assets/identity'))
 
 # Source keeps original __file__-relative native headers and asset paths.
 for folder in ('src/desktopapp', 'src/camera_runtime', 'src/looks/looktool',
@@ -77,6 +79,12 @@ if os.environ.get('A7C2_BUILD_PREVIEW_GATE_TRIAL') == '1':
 a = Analysis([str(entry)], pathex=[],
              binaries=binaries, datas=datas, hiddenimports=hidden,
              excludes=['tkinter', 'matplotlib', 'pandas', 'IPython', 'pytest'])
+if sys.platform == 'darwin' and platform.machine() == 'x86_64':
+    # Signing the Intel Zig 0.13.0 executable itself breaks its Clang frontend.
+    # Keep the original bytes in Resources, sealed by the outer app signature.
+    zig = next(item for item in a.binaries if item[0] == 'ziglang/zig')
+    a.binaries.remove(zig)
+    a.datas.append((zig[0], zig[1], 'DATA'))
 pyz = PYZ(a.pure)
 exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name='A7C2Tools',
           console=False, disable_windowed_traceback=False,

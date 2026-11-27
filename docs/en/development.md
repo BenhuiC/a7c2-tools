@@ -2,6 +2,10 @@
 
 The manually dispatched `macos-native.yml` defaults to packaging both Apple Silicon and Intel on native runners. Select `x86_64` to build only `A7C2Tools-macOS-x86_64.dmg`. Select a ref containing the six default looks and distribution SSH assets. The jobs use the existing macOS distribution signing identity for firmware. The Intel job installs `cryptography` with build isolation and static OpenSSL so it can fall back to a source build when PyPI has no Intel wheel.
 
+On Intel macOS, preserve the Zig 0.13.0 executable byte-for-byte in the sealed app resources. An individual Mach-O signature can overwrite the start of its text section. The packaged self-test compiles the Wi-Fi receiver with the bundled compiler to cover the static AArch64 Linux build used by firmware generation.
+
+The Intel job in `BenhuiC/a7c2-tools` produces an offline test artifact. It stages the six published presets, pins the Dropbear executable and license from upstream v3.11, and uses a disabled SSH password verifier. The firmware smoke test generates its own temporary signing identity, outside the package.
+
 ## 3.11 custom-look migration (2026-11-24)
 
 Fixed-look migration restores the native Gamma record load and both native Gamma calls before replacing the retired adapter code. Both legacy native-photo and full-record sources use precomputed fixed-bank curves. Release regression covers no looks, neutral slots, defaults, legacy looks, mixed types and a single selected slot crossed with factory, electronic, mechanical and both audio selections; original Gamma instructions and native record pointers are checked. These local and packaged tests do not establish physical cold-boot acceptance.
